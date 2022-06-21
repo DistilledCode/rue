@@ -21,53 +21,98 @@ def calculate_similarity(asked_title: str, googled_title: str) -> float:
 
 def sanitize(title: str) -> str:
     title = title.lower()
-    targets = ("reddit,", "redditors,", "[serious]", "(serious)", "[nsfw]", "(nsfw)")
+    prefix_targets = ("reddit,", "redditors,", "reddit:")
+    targets = ("[serious]", "[nsfw]", "(serious)", "(nsfw)")
+    for target in prefix_targets:
+        title = title.removeprefix(target)
     for target in targets:
         title = title.removeprefix(target)
+        title = title.removesuffix(target)
     return title.strip()
 
 
-def edit_attributes(googled):
-    """Edit atributes before fetching any information.
+def check_for_personal(comment):
+    personal_pronouns = ("PRP", "PRP$")
+    doc = nlp(comment.body)
+    prp_count = sum(True for token in doc if token.tag_ in personal_pronouns)
+    prp_ratio = prp_count / len(doc)
+    if prp_ratio > 0.1:
+        print(f"\n\n[{prp_ratio}] {comment.body}\n\n")
+    return prp_ratio
 
-    Updating attributes after fethcing information doesnot update the result.
 
-    Args:
-        googled (_type_): submission instance to update
-    """
+def is_valid(comment) -> bool:
+    if comment.score < 50:
+        print("Low Karma!\n\n")
+        return False
+    if comment.edited is not False:
+        print("edited!\n\n")
+        return False
+    if comment.stickied is True:
+        print("Stickied!\n\n")
+        return False
+    if comment.author is None:
+        print("deleted or removed\n\n")
+        return False
+    if check_for_personal(comment) > 0.1:
+        return False
+
+    return True
+
+
+def update_preferences(googled):
     googled.comment_sort = "top"
-    googled.comment_limit = 5
+    googled.comment_limit = 20
     googled.comments.replace_more(limit=0)  # flattening the comment tree
 
 
+def print(text) -> None:
+    with open("log.txt", "a") as f:
+        f.write(text)
+
+
+print(f"STARTING NEW SESSION\n\n")
 for asked in subreddit.stream.submissions(skip_existing=True):
     nlp_asked = nlp(asked.title)
     if len(nlp_asked) > 15:
         # average token lenght of top 1000 posts is < 14
-        print(f"{'[SKipping long question]':-^40}")
+        print(f"{'[SKipping long question]':-^40}\n\n")
         continue
-    print(f"raw title : {asked.title}")
+    print("~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~====~=\n")
+    print("~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~====~=\n")
+    print("~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~====~=\n\n")
+    print(f"asked:   {asked.title}\n\n")
     query = f"site:www.reddit.com/r/askreddit {asked.title}"
-
-    candidate_list = []
-    for searched in search(query=query, num=5, stop=5, country="US"):
+    candidates = []
+    for searched in search(query=query, num=3, stop=3, country="US"):
         match = re.search(pattern=pattern, string=searched)
         googled = reddit.submission(match.group(1))
-        edit_attributes(googled=googled)
+        update_preferences(googled)
+        print(f"googled: {googled.title}\n\n")
         similarity = calculate_similarity(asked.title, googled.title)
-
+        print(f"score={googled.score}; similar={round(similarity,4)}\n\n")
         if similarity > 0.95 and googled.score > 100:
-            candidate_list.append(googled)
+            print("GOT ONE!\n\n")
+            candidates.append(googled)
+        else:
+            print("Googled post didnt met criteria\n\n")
+        print("************************************************\n\n")
 
-    if candidate_list:
-        top_down = sorted(candidate_list, key=lambda x: x.score, reverse=True)
-        for each in top_down:
-            print("---*****----")
-            for comment in each.comments:
-                print(f"[{comment.score}] {comment.body[:10]}")
-            print(f"[{each.score}] {each.title}")
-    print("~=" * 20)
+    if candidates:
+        valid_comments = []
+        for candidate in reversed(candidates):
+            for comment in candidate.comments:
+                if is_valid(comment):
+                    valid_comments.append(comment)
+
+        valid_comments.sort(key=lambda x: x.score, reverse=True)
+        for top_comment in valid_comments:
+            print("@@@@@@@@@@@@@@@@\n\n")
+            print(f"[{top_comment.score}] {top_comment.body}\n\n")
+            print("@@@@@@@@@@@@@@@@\n\n")
+    else:
+        print("No googled post had >100 score or >0.95 similarity\n\n")
 
 
-# TODO implement a similarity functon which discards punctuation & stop words
-# TODO "if len(nlp_asked) > 15:" can be refined I think
+# TODO dont't fetch from posts less than two weeks old
+# TODO periodically look at 'rising' posts also as bot will sleep after commenting, missing out on a lot

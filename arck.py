@@ -1,8 +1,11 @@
 import re
+import time
 
 import praw
 import spacy
 from googlesearch import search
+from praw.models.reddit.comment import Comment
+from praw.models.reddit.submission import Submission
 
 pattern = r"comments\/([a-z0-9]{1,})\/"
 nlp = spacy.load("en_core_web_lg")
@@ -23,25 +26,29 @@ def sanitize(title: str) -> str:
     title = title.lower()
     prefix_targets = ("reddit,", "redditors,", "reddit:")
     targets = ("[serious]", "[nsfw]", "(serious)", "(nsfw)")
-    for target in prefix_targets:
-        title = title.removeprefix(target)
+    for prefix_target in prefix_targets:
+        title = title.removeprefix(prefix_target)
     for target in targets:
         title = title.removeprefix(target)
         title = title.removesuffix(target)
     return title.strip()
 
 
-def check_for_personal(comment):
+def post_age(post) -> float:
+    return (time.time() - post.created_utc) / (24 * 60 * 60)
+
+
+def prp_ratio(comment: Comment) -> float:
     personal_pronouns = ("PRP", "PRP$")
     doc = nlp(comment.body)
     prp_count = sum(True for token in doc if token.tag_ in personal_pronouns)
-    prp_ratio = prp_count / len(doc)
-    if prp_ratio > 0.1:
-        print(f"\n\n[{prp_ratio}] {comment.body}\n\n")
-    return prp_ratio
+    ratio = prp_count / len(doc)
+    if ratio > 0.1:
+        print(f"\n\n[{ratio}] {comment.body}\n\n")
+    return ratio
 
 
-def is_valid(comment) -> bool:
+def validate_comment(comment: Comment) -> bool:
     if comment.score < 50:
         print("Low Karma!\n\n")
         return False
@@ -54,13 +61,13 @@ def is_valid(comment) -> bool:
     if comment.author is None:
         print("deleted or removed\n\n")
         return False
-    if check_for_personal(comment) > 0.1:
+    if prp_ratio(comment) > 0.1:
         return False
 
     return True
 
 
-def update_preferences(googled):
+def update_preferences(googled: Submission) -> None:
     googled.comment_sort = "top"
     googled.comment_limit = 20
     googled.comments.replace_more(limit=0)  # flattening the comment tree
@@ -73,9 +80,8 @@ def print(text) -> None:
 
 print(f"STARTING NEW SESSION\n\n")
 for asked in subreddit.stream.submissions(skip_existing=True):
-    nlp_asked = nlp(asked.title)
-    if len(nlp_asked) > 15:
-        # average token lenght of top 1000 posts is < 14
+    # average token lenght of top 1000 posts is < 14
+    if len(nlp(asked.title)) > 20:
         print(f"{'[SKipping long question]':-^40}\n\n")
         continue
     print("~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~====~=\n")
@@ -88,22 +94,23 @@ for asked in subreddit.stream.submissions(skip_existing=True):
         match = re.search(pattern=pattern, string=searched)
         googled = reddit.submission(match.group(1))
         update_preferences(googled)
+        if post_age(googled) < 14:
+            continue
         print(f"googled: {googled.title}\n\n")
         similarity = calculate_similarity(asked.title, googled.title)
         print(f"score={googled.score}; similar={round(similarity,4)}\n\n")
         if similarity > 0.95 and googled.score > 100:
             print("GOT ONE!\n\n")
-            candidates.append(googled)
+            candidates.extend(comment for comment in googled.comments)
         else:
             print("Googled post didnt met criteria\n\n")
         print("************************************************\n\n")
 
     if candidates:
         valid_comments = []
-        for candidate in reversed(candidates):
-            for comment in candidate.comments:
-                if is_valid(comment):
-                    valid_comments.append(comment)
+        for comment in candidates:
+            if validate_comment(comment):
+                valid_comments.append(comment)
 
         valid_comments.sort(key=lambda x: x.score, reverse=True)
         for top_comment in valid_comments:
@@ -114,5 +121,5 @@ for asked in subreddit.stream.submissions(skip_existing=True):
         print("No googled post had >100 score or >0.95 similarity\n\n")
 
 
-# TODO dont't fetch from posts less than two weeks old
 # TODO periodically look at 'rising' posts also as bot will sleep after commenting, missing out on a lot
+# TODO implementing the above will also need to keep track of which posts have been visited

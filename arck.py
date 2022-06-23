@@ -1,7 +1,7 @@
 import re
 import sqlite3
 import time
-from collections import deque
+from collections import namedtuple
 from contextlib import contextmanager
 from typing import Generator
 
@@ -120,16 +120,29 @@ def print(text) -> None:
         f.write(text)
 
 
+def validate_post(post, fetched_ids) -> tuple[bool, bool]:
+    Validation = namedtuple("Validation", ["is_valid", "is_unique"])
+    validation = Validation(is_unique=True, is_valid=True)
+
+    if (post.id,) in fetched_ids:
+        validation._replace(is_unique=False)
+
+    # average token lenght of top 1000 posts is < 14
+    if len(nlp(post.title)) > 20:
+        print(f"{'[SKipping long question]':-^40}\n\n")
+        validation._replace(is_valid=False)
+    return validation
+
+
 print("STARTING NEW SESSION\n\n")
 
 fetched_ids = get_fetched_ids()
 
 for asked in subreddit.stream.submissions(skip_existing=True):
-    if (asked.id,) in fetched_ids:
-        continue
-    # average token lenght of top 1000 posts is < 14
-    if len(nlp(asked.title)) > 20:
-        print(f"{'[SKipping long question]':-^40}\n\n")
+    post = validate_post(asked, fetched_ids)
+    if post.is_unique:
+        fetched_ids = update_fetched_ids(fetched_ids, asked.id)
+    if not post.is_unique or not post.is_valid:
         continue
     print("~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~====~=\n")
     print("~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~====~=\n")

@@ -1,5 +1,9 @@
 import re
+import sqlite3
 import time
+from collections import deque
+from contextlib import contextmanager
+from typing import Generator
 
 import praw
 import spacy
@@ -7,11 +11,49 @@ from googlesearch import search
 from praw.models.reddit.comment import Comment
 from praw.models.reddit.submission import Submission
 
+DB_SOURCE = "seen.db"
+
 pattern = r"comments\/([a-z0-9]{1,})\/"
 nlp = spacy.load("en_core_web_lg")
 reddit = praw.Reddit("arck")
 print(reddit.user.me())
 subreddit = reddit.subreddit("askreddit")
+
+
+@contextmanager
+def load_db(source: str) -> Generator[sqlite3.Connection, None, None]:
+    con = sqlite3.connect(source)
+    yield con
+    con.commit()
+    con.close()
+
+
+def update_fetched_ids(fetched_ids: set, postid: str):
+    curr_time = time.time()
+    with load_db(DB_SOURCE) as con:
+        cur = con.cursor()
+        cur.execute(
+            """INSERT INTO seen
+                    VALUES (?,?);""",
+            (postid, curr_time),
+        )
+    fetched_ids.add((postid, curr_time))
+    return fetched_ids
+
+
+def get_fetched_ids() -> set:
+    with load_db(DB_SOURCE) as con:
+        cur = con.cursor()
+        cur.execute(
+            """CREATE TABLE IF NOT EXISTS 
+                    seen(
+                        postid TEXT NOT NULL,
+                        time_seen REAL NOT NULL
+                        );
+                    """
+        )
+        cur.execute("SELECT postid FROM seen;")
+        return set(cur.fetchall())
 
 
 def calculate_similarity(asked_title: str, googled_title: str) -> float:
@@ -78,8 +120,13 @@ def print(text) -> None:
         f.write(text)
 
 
-print(f"STARTING NEW SESSION\n\n")
+print("STARTING NEW SESSION\n\n")
+
+fetched_ids = get_fetched_ids()
+
 for asked in subreddit.stream.submissions(skip_existing=True):
+    if (asked.id,) in fetched_ids:
+        continue
     # average token lenght of top 1000 posts is < 14
     if len(nlp(asked.title)) > 20:
         print(f"{'[SKipping long question]':-^40}\n\n")

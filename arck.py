@@ -1,18 +1,24 @@
 import re
-import sqlite3
 import time
 from contextlib import contextmanager
 from math import ceil
 from typing import Generator
 
 import praw
+import psycopg2
 import spacy
 from googlesearch import search
 from praw.models.listing.generator import ListingGenerator
 from praw.models.reddit.comment import Comment
 from praw.models.reddit.submission import Submission
+from psycopg2.extensions import connection
 
-DB_SOURCE = "seen.db"
+DB_SOURCE = {
+    "url": None,
+    "dbname": "arck",
+    "user": "postgres",
+    "password": "one",
+}
 DB_MAX_ROWS = 30
 NEW_POST_LIMIT = 10
 RISING_POST_LIMIT = 10
@@ -21,10 +27,24 @@ MIN_POST_SCORE = 100
 DRY_RUN = True
 
 
+@contextmanager
+def load_db(**kwargs) -> Generator[connection, None, None]:
+    if kwargs["url"] is not None:
+        con = psycopg2.connect(kwargs["url"])
+    else:
+        con = psycopg2.connect(
+            dbname=kwargs["dbname"],
+            user=kwargs["user"],
+            password=kwargs["password"],
+        )
+    yield con
+    con.commit()
+    con.close()
+
+
 class FetchedIds:
-    def __init__(self, source: str):
-        self.source = source
-        with self._load_db() as con:
+    def __init__(self):
+        with load_db(**DB_SOURCE) as con:
             cur = con.cursor()
             cur.execute(
                 """CREATE TABLE IF NOT EXISTS 
@@ -35,16 +55,9 @@ class FetchedIds:
                         """
             )
 
-    @contextmanager
-    def _load_db(self) -> Generator[sqlite3.Connection, None, None]:
-        con = sqlite3.connect(self.source)
-        yield con
-        con.commit()
-        con.close()
-
     @property
     def ids(self):
-        with self._load_db() as con:
+        with load_db(**DB_SOURCE) as con:
             cur = con.cursor()
             cur.execute("SELECT postid FROM seen;")
             self._ids = set(cur.fetchall())
@@ -52,11 +65,14 @@ class FetchedIds:
 
     def update(self, postid: str):
         curr_time = time.time()
-        with self._load_db() as con:
+        with load_db(**DB_SOURCE) as con:
             cur = con.cursor()
             cur.execute(
-                """INSERT OR REPLACE INTO seen
-                    VALUES (?,?);""",
+                """INSERT INTO seen
+                    VALUES (%s,%s)
+                    ON CONFLICT (postid)
+                    DO UPDATE
+                    SET postid = excluded.postid;""",
                 (postid, curr_time),
             )
 
@@ -64,7 +80,7 @@ class FetchedIds:
         return len(self.ids)
 
     def bisect(self):
-        with self._load_db() as con:
+        with load_db(**DB_SOURCE) as con:
             cur = con.cursor()
             cur.execute(
                 """DELETE FROM seen 
@@ -173,10 +189,14 @@ def google_query(question: str) -> list:
     candidates = []
     for searched in search(query=query, num=3, stop=3, country="US"):
         print("************************************************\n")
-        match = re.search(pattern=pattern, string=searched)
-        googled = reddit.submission(match.group(1))
+        if (match := re.search(pattern=pattern, string=searched)) is not None:
+            googled = reddit.submission(match.group(1))
+        else:
+            print("No r/askreddit thread in Google query\n")
+            continue
         update_preferences(googled)
         if post_age(googled) < 14:  # 14 days
+            print("Younger than 14 days\n")
             continue
         print(f"googled: {googled.title}\n")
         similarity = calculate_similarity(question, googled.title)
@@ -202,7 +222,7 @@ def main() -> None:
     for sort_type in streams:
         for question in get_questions(streams[sort_type]):
             answers: list = get_answers(question.title)
-            post_answer(answers)
+            post_answer(question, answers)
 
 
 def post_answer(question: Submission, answers: list):
@@ -224,7 +244,7 @@ def init_globals() -> None:
 
 
 def get_questions(stream: ListingGenerator):
-    fetchedids: FetchedIds = FetchedIds(DB_SOURCE)
+    fetchedids: FetchedIds = FetchedIds()
     for question in stream:
         print("\n~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~\n")
         print(f"\nasked: {question.title}\n")

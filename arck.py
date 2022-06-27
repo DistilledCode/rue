@@ -1,3 +1,5 @@
+import datetime
+import logging
 import re
 import time
 from contextlib import contextmanager
@@ -11,7 +13,7 @@ from googlesearch import search
 from praw.models.listing.generator import ListingGenerator
 from praw.models.reddit.comment import Comment
 from praw.models.reddit.submission import Submission
-from psycopg2.extensions import connection
+from psycopg2.extensions import cursor
 
 DB_SOURCE = {
     "url": None,
@@ -19,7 +21,8 @@ DB_SOURCE = {
     "user": "postgres",
     "password": "one",
 }
-DB_MAX_ROWS = 30
+MAX_FETCHED_IDS = 30
+MAX_LOGS = 100
 NEW_POST_LIMIT = 10
 RISING_POST_LIMIT = 10
 MIN_COMMENT_SCORE = 50
@@ -27,8 +30,92 @@ MIN_POST_SCORE = 100
 DRY_RUN = True
 
 
+def get_logger() -> logging.Logger:
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+    frmt = "{asctime} {levelname:^10} {filename}:{lineno}  {message}"
+    formatter = logging.Formatter(frmt, style="{")
+    db_handler = DBLogHandler()
+    db_handler.setFormatter(formatter)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.WARNING)
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+    logger.addHandler(db_handler)
+    return logger
+
+
+class DBLogHandler(logging.Handler):
+    def __init__(self) -> None:
+        logging.Handler.__init__(self)
+        with load_db(**DB_SOURCE) as cur:
+            cur.execute(
+                """CREATE TABLE IF NOT EXISTS 
+                        log(
+                            timestamp TIMESTAMP NOT NULL,
+                            level TEXT NOT NULL,
+                            funcname TEXT NOT NULL,
+                            filename TEXT NOT NULL,
+                            action TEXT,
+                            message TEXT NOT NULL
+                            );
+                        """
+            )
+        self._update_record_num()
+
+    def _update_record_num(self):
+        with load_db(**DB_SOURCE) as cur:
+            cur.execute("SELECT COUNT(*) FROM log;")
+            self.record_num = cur.fetchall()[0][0]
+
+    def _bisect(self):
+        with load_db(**DB_SOURCE) as cur:
+            cur.execute(
+                """DELETE FROM log 
+                    WHERE timestamp IN (
+                        SELECT timestamp
+                        FROM log
+                        ORDER BY timestamp 
+                        LIMIT (
+                            SELECT COUNT(*) 
+                            FROM log
+                        )/2
+                    );
+                """
+            )
+        self._update_record_num()
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        return super().handleError(record)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.format(record=record)
+        try:
+            time_stamp = datetime.datetime.fromtimestamp(record.created)
+            record_vals = (
+                time_stamp,
+                record.levelname,
+                record.funcName,
+                f"{record.filename}:{record.lineno}",
+                None,
+                record.message,
+            )
+        except Exception:
+            self.handleError(record)
+        with load_db(**DB_SOURCE) as cur:
+            cur.execute(
+                """INSERT INTO log
+                    VALUES (%s,%s,%s,%s,%s,%s);
+                """,
+                record_vals,
+            )
+        self.record_num += 1
+        if self.record_num == MAX_LOGS:
+            self._bisect()
+
+
 @contextmanager
-def load_db(**kwargs) -> Generator[connection, None, None]:
+def load_db(**kwargs) -> Generator[cursor, None, None]:
     if kwargs["url"] is not None:
         con = psycopg2.connect(kwargs["url"])
     else:
@@ -37,51 +124,53 @@ def load_db(**kwargs) -> Generator[connection, None, None]:
             user=kwargs["user"],
             password=kwargs["password"],
         )
-    yield con
+    cur = con.cursor()
+    yield cur
     con.commit()
+    cur.close()
     con.close()
 
 
 class FetchedIds:
     def __init__(self):
-        with load_db(**DB_SOURCE) as con:
-            cur = con.cursor()
+        with load_db(**DB_SOURCE) as cur:
             cur.execute(
                 """CREATE TABLE IF NOT EXISTS 
                         seen(
                             postid TEXT NOT NULL UNIQUE,
-                            time_seen REAL NOT NULL
+                            time_seen TIMESTAMP NOT NULL
                             );
                         """
             )
+            cur.execute("SET TIME ZONE 'UTC';")
+            cur.close()
 
     @property
     def ids(self):
-        with load_db(**DB_SOURCE) as con:
-            cur = con.cursor()
+        with load_db(**DB_SOURCE) as cur:
             cur.execute("SELECT postid FROM seen;")
             self._ids = set(cur.fetchall())
         return self._ids
 
     def update(self, postid: str):
-        curr_time = time.time()
-        with load_db(**DB_SOURCE) as con:
-            cur = con.cursor()
+        curr_time = datetime.datetime.now(tz=datetime.timezone.utc)
+        with load_db(**DB_SOURCE) as cur:
             cur.execute(
                 """INSERT INTO seen
                     VALUES (%s,%s)
                     ON CONFLICT (postid)
                     DO UPDATE
-                    SET postid = excluded.postid;""",
+                    SET time_seen = excluded.time_seen;
+                """,
                 (postid, curr_time),
             )
+            cur.close()
 
     def __len__(self):
         return len(self.ids)
 
     def bisect(self):
-        with load_db(**DB_SOURCE) as con:
-            cur = con.cursor()
+        with load_db(**DB_SOURCE) as cur:
             cur.execute(
                 """DELETE FROM seen 
                     WHERE postid IN (
@@ -95,6 +184,7 @@ class FetchedIds:
                     );
                 """
             )
+            cur.close()
 
 
 def calculate_similarity(asked_title: str, googled_title: str) -> float:
@@ -238,7 +328,8 @@ def post_answer(question: Submission, answers: list):
 
 
 def init_globals() -> None:
-    global reddit, nlp
+    global reddit, nlp, logger
+    logger = get_logger()
     reddit = praw.Reddit("arck")
     nlp = spacy.load("en_core_web_lg")
 
@@ -252,10 +343,10 @@ def get_questions(stream: ListingGenerator):
         if post["is_unique"]:
             print("Unique Post\n")
             fetchedids.update(question.id)
-        if len(fetchedids) == DB_MAX_ROWS:
+        if len(fetchedids) == MAX_FETCHED_IDS:
             fetchedids.bisect()
             print(f"{len(fetchedids)=}\n")
-            assert len(fetchedids) == ceil(DB_MAX_ROWS / 2)
+            assert len(fetchedids) == ceil(MAX_FETCHED_IDS / 2)
         if not post["is_unique"] or not post["is_valid"]:
             print("Invalid Post\n")
             continue
@@ -276,7 +367,6 @@ if __name__ == "__main__":
 # TODO FEATURE: checking visibility of all (or all) comments after sometime
 
 # * include other q/a based subreddits?
-# * replace all cur = con.cursor() with only con?
 # * parse your comment replies and act accordingly?
 # * -- seach for keywrods?
 # * -- Check if comment contains a link leads to original post/comment?

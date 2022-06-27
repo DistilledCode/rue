@@ -18,6 +18,7 @@ NEW_POST_LIMIT = 10
 RISING_POST_LIMIT = 10
 MIN_COMMENT_SCORE = 50
 MIN_POST_SCORE = 100
+DRY_RUN = True
 
 
 class FetchedIds:
@@ -200,15 +201,18 @@ def main() -> None:
     }
     for sort_type in streams:
         for question in get_questions(streams[sort_type]):
-            answers = get_answers(question.title)
+            answers: list = get_answers(question.title)
             post_answer(answers)
 
 
-def post_answer(answers):
+def post_answer(question: Submission, answers: list):
     if answers:
-        for answer in answers:
-            print("VALID ANSWER:\n")
-            print(f"[{answer.score}] {answer.body}\n")
+        if DRY_RUN:
+            for answer in answers:
+                print("VALID ANSWER:\n")
+                print(f"[{answer.score}] {answer.body}\n")
+        else:
+            question.reply(answers[0])
     else:
         print("**No valid answers found**\n")
 
@@ -245,7 +249,6 @@ if __name__ == "__main__":
 # TODO logging
 # TODO verbose
 # TODO warning when `DB_MAX_ROWS` is set too low (minimum 100 is advised)
-# TODO implement fethced_ids into a class. I have get, update. So it's better to make a class.
 # TODO FEATURE: dry run
 # TODO FEATURE: mutliple account instances
 # TODO FEATURE: proxy server support

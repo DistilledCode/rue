@@ -3,7 +3,6 @@ import logging
 import re
 import time
 from contextlib import contextmanager
-from math import ceil
 from typing import Generator
 
 import praw
@@ -21,13 +20,15 @@ DB_SOURCE = {
     "user": "postgres",
     "password": "one",
 }
-MAX_FETCHED_IDS = 30
-MAX_LOGS = 100
-NEW_POST_LIMIT = 10
-RISING_POST_LIMIT = 10
+MAX_FETCHED_IDS = 5
+# MAX_LOGS >2 is must or it will log _bisect() messages recursively infinitely
+MAX_LOGS = 3
+NEW_POST_LIMIT = 4
+RISING_POST_LIMIT = 4
 MIN_COMMENT_SCORE = 50
 MIN_POST_SCORE = 100
 DRY_RUN = True
+MAX_TOKEN_LEN = 20
 
 
 def get_logger() -> logging.Logger:
@@ -38,7 +39,7 @@ def get_logger() -> logging.Logger:
     db_handler = DBLogHandler()
     db_handler.setFormatter(formatter)
     stream_handler = logging.StreamHandler()
-    stream_handler.setLevel(logging.WARNING)
+    stream_handler.setLevel(logging.INFO)
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
     logger.addHandler(db_handler)
@@ -59,31 +60,10 @@ class DBLogHandler(logging.Handler):
                             action TEXT,
                             message TEXT NOT NULL,
                             isexception BOOL NOT NULL,
-                            traceback TEXT
+                            traceback TEXT,
+                            stackinfo TEXT
                             );
                         """
-            )
-        self._update_record_num()
-
-    def _update_record_num(self):
-        with load_db(**DB_SOURCE) as cur:
-            cur.execute("SELECT COUNT(*) FROM log;")
-            self.record_num = cur.fetchall()[0][0]
-
-    def _bisect(self):
-        with load_db(**DB_SOURCE) as cur:
-            cur.execute(
-                """DELETE FROM log 
-                    WHERE timestamp IN (
-                        SELECT timestamp
-                        FROM log
-                        ORDER BY timestamp 
-                        LIMIT (
-                            SELECT COUNT(*) 
-                            FROM log
-                        )/2
-                    );
-                """
             )
         self._update_record_num()
 
@@ -110,19 +90,45 @@ class DBLogHandler(logging.Handler):
                 record.message,
                 isexception,
                 exc_traceback,
+                record.stack_info,
             )
         except Exception:
             self.handleError(record)
         with load_db(**DB_SOURCE) as cur:
             cur.execute(
                 """INSERT INTO log
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s);
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s);
                 """,
                 record_vals,
             )
         self.record_num += 1
-        if self.record_num == MAX_LOGS:
+        while self.record_num > MAX_LOGS:
             self._bisect()
+
+    def _update_record_num(self):
+        with load_db(**DB_SOURCE) as cur:
+            cur.execute("SELECT COUNT(*) FROM log;")
+            self.record_num = cur.fetchall()[0][0]
+
+    def _bisect(self):
+        with load_db(**DB_SOURCE) as cur:
+            cur.execute(
+                """DELETE FROM log
+                    WHERE timestamp IN (
+                        SELECT timestamp
+                        FROM log
+                        ORDER BY timestamp
+                        LIMIT (
+                            SELECT COUNT(*)
+                            FROM log
+                        )/2
+                    );
+                """
+            )
+        self._update_record_num()
+        # + 1 for this very record itself
+        log_str = f"Bisected {self.__class__} to lenght {self.record_num + 1}"
+        logger.debug(log_str)
 
 
 @contextmanager
@@ -146,7 +152,7 @@ class FetchedIds:
     def __init__(self):
         with load_db(**DB_SOURCE) as cur:
             cur.execute(
-                """CREATE TABLE IF NOT EXISTS 
+                """CREATE TABLE IF NOT EXISTS
                         seen(
                             postid TEXT NOT NULL UNIQUE,
                             time_seen TIMESTAMP NOT NULL
@@ -155,6 +161,7 @@ class FetchedIds:
             )
             cur.execute("SET TIME ZONE 'UTC';")
             cur.close()
+        logger.debug(f"Succesively initialized {self.__class__}")
 
     @property
     def ids(self):
@@ -176,26 +183,28 @@ class FetchedIds:
                 (postid, curr_time),
             )
             cur.close()
-
-    def __len__(self):
-        return len(self.ids)
+        logger.debug(f"Added ({postid!r},{curr_time}) to {self.__class__}")
 
     def bisect(self):
         with load_db(**DB_SOURCE) as cur:
             cur.execute(
-                """DELETE FROM seen 
+                """DELETE FROM seen
                     WHERE postid IN (
                         SELECT postid
-                        FROM seen 
-                        ORDER BY time_seen 
+                        FROM seen
+                        ORDER BY time_seen
                         LIMIT (
-                            SELECT COUNT(*) 
+                            SELECT COUNT(*)
                             FROM seen
                         )/2
                     );
                 """
             )
             cur.close()
+        logger.debug(f"Bisected {self.__class__} to lenght {self.__len__()}")
+
+    def __len__(self):
+        return len(self.ids)
 
 
 def calculate_similarity(asked_title: str, googled_title: str) -> float:
@@ -203,7 +212,8 @@ def calculate_similarity(asked_title: str, googled_title: str) -> float:
     googled_title = sanitize(googled_title)
     nlp_asked = nlp(asked_title)
     nlp_googled = nlp(googled_title)
-    return nlp_asked.similarity(nlp_googled)
+    logger.debug(f"Similarity: {(sim := nlp_asked.similarity(nlp_googled))}")
+    return sim
 
 
 def sanitize(title: str) -> str:
@@ -227,25 +237,30 @@ def prp_ratio(comment: Comment) -> float:
     doc = nlp(comment.body)
     prp_count = sum(True for token in doc if token.tag_ in personal_pronouns)
     ratio = prp_count / len(doc)
-    if ratio > 0.1:
-        print(f"\n[{ratio}] {comment.body}\n")
     return ratio
 
 
 def validate_comment(comment: Comment) -> bool:
     if comment.score < MIN_COMMENT_SCORE:
-        print("Low Karma!\n")
+        logger.debug(f"Comment: score < {MIN_COMMENT_SCORE}")
         return False
+    else:
+        logger.debug(f"Comment: score > {MIN_COMMENT_SCORE}")
     if comment.edited is not False:
-        print("edited!\n")
+        logger.debug("Comment: edited")
         return False
+    else:
+        logger.debug("Comment: unedited")
     if comment.stickied is True:
-        print("Stickied!\n")
+        logger.debug(f"Comment: stickied")
         return False
+    else:
+        logger.debug(f"Comment: not stickied")
     if comment.author is None:
-        print("deleted or removed\n")
+        logger.debug("Comment: deleted or removed")
         return False
     if prp_ratio(comment) > 0.1:
+        logger.debug(f"Comment: personal pronoun ratio > 0.1")
         return False
     return True
 
@@ -265,11 +280,16 @@ def validate_post(post: Submission, fetchedids: FetchedIds) -> dict[bool]:
     validation = {"is_unique": True, "is_valid": True}
     if post.author is None:
         validation["is_valid"] = False
+        logger.debug("Post: deleted or removed")
     if (post.id,) in fetchedids.ids:
         validation["is_unique"] = False
+        logger.debug("Post: duplicate (fetched earlier)")
+    else:
+        logger.debug("Post: unique")
     # average token lenght of top 1000 posts is < 14
-    if len(nlp(post.title)) > 20:
+    if len(nlp(post.title)) > MAX_TOKEN_LEN:
         validation["is_valid"] = False
+        logger.debug(f"Post: token length > {MAX_TOKEN_LEN}")
     return validation
 
 
@@ -279,7 +299,10 @@ def get_answers(question: str) -> list:
     if candidates:
         for comment in candidates:
             if validate_comment(comment):
+                logger.info(f"Comment: valid")
                 answers.append(comment)
+            else:
+                logger.info(f"Comment: invalid")
         answers.sort(key=lambda x: x.score, reverse=True)
     return answers
 
@@ -289,24 +312,23 @@ def google_query(question: str) -> list:
     pattern = r"comments\/([a-z0-9]{1,})\/"
     candidates = []
     for searched in search(query=query, num=3, stop=3, country="US"):
-        print("************************************************\n")
         if (match := re.search(pattern=pattern, string=searched)) is not None:
             googled = reddit.submission(match.group(1))
         else:
-            print("No r/askreddit thread in Google query\n")
+            logger.debug("Googled: result not from r/askreddit")
             continue
         update_preferences(googled)
+        logger.info(f"Googled: {googled.title}")
         if post_age(googled) < 14:  # 14 days
-            print("Younger than 14 days\n")
+            logger.debug("Googled: younger than 14 days")
             continue
-        print(f"googled: {googled.title}\n")
         similarity = calculate_similarity(question, googled.title)
-        print(f"score={googled.score}; similar={round(similarity,4)}\n")
+        logger.debug(f"Googled: score = {googled.score}")
         if similarity > 0.95 and googled.score > MIN_POST_SCORE:
-            print("googled post eligible!\n")
+            logger.info("Googled: eligible")
             candidates.extend(comment for comment in googled.comments)
         else:
-            print("googled post NOT eligible(similarity<0.95 or score<100)\n")
+            logger.info("Googled: not eligible")
     return candidates
 
 
@@ -330,37 +352,49 @@ def post_answer(question: Submission, answers: list):
     if answers:
         if DRY_RUN:
             for answer in answers:
-                print("VALID ANSWER:\n")
-                print(f"[{answer.score}] {answer.body}\n")
+                logger.info(f"Answer: [{answer.score}] {answer.body!r}")
         else:
+            logger.info(f"Answer: [{answer.score}] {answer.body!r}")
             question.reply(answers[0])
     else:
-        print("**No valid answers found**\n")
+        logger.info("Answer: no valid comments to reply")
 
 
 def init_globals() -> None:
     global reddit, nlp, logger
     logger = get_logger()
-    reddit = praw.Reddit("arck")
-    nlp = spacy.load("en_core_web_lg")
+    try:
+        reddit = praw.Reddit("arck")
+    except Exception:
+        logger.critical("Failed `.Reddit` initialization", stack_info=True)
+    else:
+        username = reddit.user.me().name
+        log_str = f"Successfully initialized {reddit.__class__} {username=}"
+        logger.debug(log_str)
+    try:
+        nlp = spacy.load("en_core_web_lg")
+    except Exception:
+        logger.critical("Failed loading spaCy model", stack_info=True)
+    else:
+        log_var = f"{nlp.meta['lang']}_{nlp.meta['name']}"
+        logger.debug(f"Successfully loaded spaCy model {log_var!r}")
 
 
 def get_questions(stream: ListingGenerator):
     fetchedids: FetchedIds = FetchedIds()
     for question in stream:
-        print("\n~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~\n")
-        print(f"\nasked: {question.title}\n")
+        logger.info(f"Question: {question.title}")
         post: dict = validate_post(question, fetchedids)
         if post["is_unique"]:
-            print("Unique Post\n")
             fetchedids.update(question.id)
-        if len(fetchedids) == MAX_FETCHED_IDS:
+        while len(fetchedids) > MAX_FETCHED_IDS:
             fetchedids.bisect()
-            print(f"{len(fetchedids)=}\n")
-            assert len(fetchedids) == ceil(MAX_FETCHED_IDS / 2)
         if not post["is_unique"] or not post["is_valid"]:
-            print("Invalid Post\n")
+            logger.info("Question: invalid")
             continue
+        else:
+            logger.info("Question: valid")
+
         yield question
 
 
@@ -369,7 +403,6 @@ if __name__ == "__main__":
 
 # TODO tesing
 # TODO logging (partially done)
-# TODO -- implement logic for logger.exception (exc_info is not None & exc_text contains traceback)
 # TODO verbose
 # TODO warning when `DB_MAX_ROWS` is set too low (minimum 100 is advised)
 # TODO FEATURE: dry run

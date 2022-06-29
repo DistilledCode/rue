@@ -57,7 +57,9 @@ class DBLogHandler(logging.Handler):
                             funcname TEXT NOT NULL,
                             filename TEXT NOT NULL,
                             action TEXT,
-                            message TEXT NOT NULL
+                            message TEXT NOT NULL,
+                            isexception BOOL NOT NULL,
+                            traceback TEXT
                             );
                         """
             )
@@ -90,6 +92,13 @@ class DBLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         self.format(record=record)
+        if record.exc_info is not None:
+            isexception = True
+            exc_traceback = "".join(i for i in record.exc_text)
+        else:
+            isexception = False
+            exc_traceback = None
+
         try:
             time_stamp = datetime.datetime.fromtimestamp(record.created)
             record_vals = (
@@ -99,13 +108,15 @@ class DBLogHandler(logging.Handler):
                 f"{record.filename}:{record.lineno}",
                 None,
                 record.message,
+                isexception,
+                exc_traceback,
             )
         except Exception:
             self.handleError(record)
         with load_db(**DB_SOURCE) as cur:
             cur.execute(
                 """INSERT INTO log
-                    VALUES (%s,%s,%s,%s,%s,%s);
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s);
                 """,
                 record_vals,
             )
@@ -357,7 +368,8 @@ if __name__ == "__main__":
     main()
 
 # TODO tesing
-# TODO logging
+# TODO logging (partially done)
+# TODO -- implement logic for logger.exception (exc_info is not None & exc_text contains traceback)
 # TODO verbose
 # TODO warning when `DB_MAX_ROWS` is set too low (minimum 100 is advised)
 # TODO FEATURE: dry run

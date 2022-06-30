@@ -3,6 +3,7 @@ import logging
 import re
 import time
 from contextlib import contextmanager
+from functools import partial
 from typing import Generator
 
 import praw
@@ -55,9 +56,9 @@ class DBLogHandler(logging.Handler):
                         log(
                             timestamp TIMESTAMP NOT NULL,
                             level TEXT NOT NULL,
-                            funcname TEXT NOT NULL,
                             filename TEXT NOT NULL,
-                            action TEXT,
+                            funcname TEXT NOT NULL,
+                            id TEXT,
                             message TEXT NOT NULL,
                             isexception BOOL NOT NULL,
                             traceback TEXT,
@@ -79,6 +80,7 @@ class DBLogHandler(logging.Handler):
             isexception = False
             exc_traceback = None
 
+        id = getattr(record, "id", None)
         try:
             time_stamp = datetime.datetime.fromtimestamp(record.created)
             record_vals = (
@@ -86,7 +88,8 @@ class DBLogHandler(logging.Handler):
                 record.levelname,
                 record.funcName,
                 f"{record.filename}:{record.lineno}",
-                None,
+                record.funcName,
+                id,
                 record.message,
                 isexception,
                 exc_traceback,
@@ -192,7 +195,6 @@ class FetchedIds:
                     WHERE postid IN (
                         SELECT postid
                         FROM seen
-                        ORDER BY time_seen
                         LIMIT (
                             SELECT COUNT(*)
                             FROM seen
@@ -241,26 +243,27 @@ def prp_ratio(comment: Comment) -> float:
 
 
 def validate_comment(comment: Comment) -> bool:
+    log_debug = partial(logger.debug, extra={"id": comment.id})
     if comment.score < MIN_COMMENT_SCORE:
-        logger.debug(f"Comment: score < {MIN_COMMENT_SCORE}")
+        log_debug(f"validation: comment score < {MIN_COMMENT_SCORE}")
         return False
     else:
         logger.debug(f"Comment: score > {MIN_COMMENT_SCORE}")
     if comment.edited is not False:
-        logger.debug("Comment: edited")
+        log_debug("validation: edited comment")
         return False
     else:
         logger.debug("Comment: unedited")
     if comment.stickied is True:
-        logger.debug(f"Comment: stickied")
+        log_debug(f"validation: stickied comment")
         return False
     else:
         logger.debug(f"Comment: not stickied")
     if comment.author is None:
-        logger.debug("Comment: deleted or removed")
+        log_debug("validation: deleted or removed comment")
         return False
     if prp_ratio(comment) > 0.1:
-        logger.debug(f"Comment: personal pronoun ratio > 0.1")
+        log_debug(f"validation: comment personal pronoun ratio > 0.1")
         return False
     return True
 
@@ -277,19 +280,20 @@ def print(text) -> None:
 
 
 def validate_post(post: Submission, fetchedids: FetchedIds) -> dict[bool]:
+    log_debug = partial(logger.debug, extra={"id": post.id})
     validation = {"is_unique": True, "is_valid": True}
     if post.author is None:
         validation["is_valid"] = False
-        logger.debug("Post: deleted or removed")
+        log_debug("validation: deleted or removed post")
     if (post.id,) in fetchedids.ids:
         validation["is_unique"] = False
-        logger.debug("Post: duplicate (fetched earlier)")
+        log_debug("validation: duplicate post (fetched earlier)")
     else:
-        logger.debug("Post: unique")
+        log_debug("validation: unique post")
     # average token lenght of top 1000 posts is < 14
     if len(nlp(post.title)) > MAX_TOKEN_LEN:
         validation["is_valid"] = False
-        logger.debug(f"Post: token length > {MAX_TOKEN_LEN}")
+        log_debug(f"validation: post token length > {MAX_TOKEN_LEN}")
     return validation
 
 
@@ -299,10 +303,10 @@ def get_answers(question: str) -> list:
     if candidates:
         for comment in candidates:
             if validate_comment(comment):
-                logger.info(f"Comment: valid")
+                logger.info("comment: valid", extra={"id": comment.id})
                 answers.append(comment)
             else:
-                logger.info(f"Comment: invalid")
+                logger.info("comment: invalid", extra={"id": comment.id})
         answers.sort(key=lambda x: x.score, reverse=True)
     return answers
 
@@ -318,17 +322,25 @@ def google_query(question: str) -> list:
             logger.debug("Googled: result not from r/askreddit")
             continue
         update_preferences(googled)
-        logger.info(f"Googled: {googled.title}")
+        logger.info(f"googled: {googled.title}", extra={"id": googled.id})
         if post_age(googled) < 14:  # 14 days
             logger.debug("Googled: younger than 14 days")
             continue
         similarity = calculate_similarity(question, googled.title)
-        logger.debug(f"Googled: score = {googled.score}")
+        logger.debug(
+            f"googled: post score={googled.score}", extra={"id": googled.id}
+        )
         if similarity > 0.95 and googled.score > MIN_POST_SCORE:
-            logger.info("Googled: eligible")
+            logger.info(
+                "googled: post eligible for parsing comments",
+                extra={"id": googled.id},
+            )
             candidates.extend(comment for comment in googled.comments)
         else:
-            logger.info("Googled: not eligible")
+            logger.info(
+                "googled: post ineligible for parsing comments",
+                extra={"id": googled.id},
+            )
     return candidates
 
 
@@ -352,12 +364,22 @@ def post_answer(question: Submission, answers: list):
     if answers:
         if DRY_RUN:
             for answer in answers:
-                logger.info(f"Answer: [{answer.score}] {answer.body!r}")
+                logger.info(
+                    f"answer: [{answer.score}] {answer.body[:100]}...",
+                    extra={"id": answer.id},
+                )
         else:
-            logger.info(f"Answer: [{answer.score}] {answer.body!r}")
-            question.reply(answers[0])
+            answer = answers[0]
+            logger.info(
+                f"answer: [{answer.score}] {answer.body[:100]}...",
+                extra={"id": answer.id},
+            )
+            question.reply(answer)
     else:
-        logger.info("Answer: no valid comments to reply")
+        logger.info(
+            "answer: no valid comments to post as answer",
+            extra={"type": "answer"},
+        )
 
 
 def init_globals() -> None:
@@ -383,17 +405,18 @@ def init_globals() -> None:
 def get_questions(stream: ListingGenerator):
     fetchedids: FetchedIds = FetchedIds()
     for question in stream:
-        logger.info(f"Question: {question.title}")
+        logger_info = partial(logger.info, extra={"id": question.id})
+        logger_info(f"question: {question.title}")
         post: dict = validate_post(question, fetchedids)
         if post["is_unique"]:
             fetchedids.update(question.id)
         while len(fetchedids) > MAX_FETCHED_IDS:
             fetchedids.bisect()
         if not post["is_unique"] or not post["is_valid"]:
-            logger.info("Question: invalid")
+            logger_info("question: is invalid")
             continue
         else:
-            logger.info("Question: valid")
+            logger_info("question: is valid")
 
         yield question
 

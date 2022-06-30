@@ -21,11 +21,11 @@ DB_SOURCE = {
     "user": "postgres",
     "password": "one",
 }
-MAX_FETCHED_IDS = 5
+MAX_FETCHED_IDS = 100
 # MAX_LOGS >2 is must or it will log _bisect() messages recursively infinitely
-MAX_LOGS = 3
-NEW_POST_LIMIT = 4
-RISING_POST_LIMIT = 4
+MAX_LOGS = 1000
+NEW_POST_LIMIT = 6
+RISING_POST_LIMIT = 6
 MIN_COMMENT_SCORE = 50
 MIN_POST_SCORE = 100
 DRY_RUN = True
@@ -86,7 +86,6 @@ class DBLogHandler(logging.Handler):
             record_vals = (
                 time_stamp,
                 record.levelname,
-                record.funcName,
                 f"{record.filename}:{record.lineno}",
                 record.funcName,
                 id,
@@ -186,7 +185,6 @@ class FetchedIds:
                 (postid, curr_time),
             )
             cur.close()
-        logger.debug(f"Added ({postid!r},{curr_time}) to {self.__class__}")
 
     def bisect(self):
         with load_db(**DB_SOURCE) as cur:
@@ -242,23 +240,23 @@ def prp_ratio(comment: Comment) -> float:
     return ratio
 
 
+def update_preferences(googled: Submission) -> None:
+    googled.comment_sort = "top"
+    googled.comment_limit = 20
+    googled.comments.replace_more(limit=0)  # flattening the comment tree
+
+
 def validate_comment(comment: Comment) -> bool:
     log_debug = partial(logger.debug, extra={"id": comment.id})
     if comment.score < MIN_COMMENT_SCORE:
         log_debug(f"validation: comment score < {MIN_COMMENT_SCORE}")
         return False
-    else:
-        logger.debug(f"Comment: score > {MIN_COMMENT_SCORE}")
     if comment.edited is not False:
         log_debug("validation: edited comment")
         return False
-    else:
-        logger.debug("Comment: unedited")
     if comment.stickied is True:
         log_debug(f"validation: stickied comment")
         return False
-    else:
-        logger.debug(f"Comment: not stickied")
     if comment.author is None:
         log_debug("validation: deleted or removed comment")
         return False
@@ -266,17 +264,6 @@ def validate_comment(comment: Comment) -> bool:
         log_debug(f"validation: comment personal pronoun ratio > 0.1")
         return False
     return True
-
-
-def update_preferences(googled: Submission) -> None:
-    googled.comment_sort = "top"
-    googled.comment_limit = 20
-    googled.comments.replace_more(limit=0)  # flattening the comment tree
-
-
-def print(text) -> None:
-    with open("log.txt", "a", encoding="utf-8") as f:
-        f.write(text)
 
 
 def validate_post(post: Submission, fetchedids: FetchedIds) -> dict[bool]:
@@ -319,12 +306,12 @@ def google_query(question: str) -> list:
         if (match := re.search(pattern=pattern, string=searched)) is not None:
             googled = reddit.submission(match.group(1))
         else:
-            logger.debug("Googled: result not from r/askreddit")
+            logger.debug("googled: result not from r/askreddit")
             continue
         update_preferences(googled)
         logger.info(f"googled: {googled.title}", extra={"id": googled.id})
         if post_age(googled) < 14:  # 14 days
-            logger.debug("Googled: younger than 14 days")
+            logger.debug("googled: post younger than 14 days")
             continue
         similarity = calculate_similarity(question, googled.title)
         logger.debug(
@@ -342,9 +329,6 @@ def google_query(question: str) -> list:
                 extra={"id": googled.id},
             )
     return candidates
-
-
-print("\n@@@\nSTARTING NEW SESSION\n@@@")
 
 
 def main() -> None:
@@ -438,3 +422,10 @@ if __name__ == "__main__":
 # * parse your comment replies and act accordingly?
 # * -- seach for keywrods?
 # * -- Check if comment contains a link leads to original post/comment?
+
+
+# question
+# googled
+# comment
+# answer
+# validation

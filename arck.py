@@ -2,11 +2,14 @@ import random
 import re
 import sys
 import time
+from configparser import NoSectionError
 from functools import partial
+from typing import Optional, Union
 from urllib.error import HTTPError
 
 import praw
 import prawcore.exceptions
+import requests
 import spacy
 from googlesearch import search
 from praw.exceptions import RedditAPIException
@@ -14,9 +17,8 @@ from praw.models.listing.generator import ListingGenerator
 from praw.models.reddit.comment import Comment
 from praw.models.reddit.redditor import Redditor
 from praw.models.reddit.submission import Submission
-from prawcore.exceptions import Forbidden
 
-from fetchedids import FetchedIds
+from fetched import FetchedIds
 from logger import logger
 from utils import *
 
@@ -71,11 +73,15 @@ def update_preferences(googled: Submission) -> None:
 
 def validate_comment(comment: Comment) -> bool:
     log_debug = partial(logger.debug, extra={"id": comment.id})
-    if comment.score < MIN_COMMENT_SCORE:
-        log_debug(f"validation: comment score < {MIN_COMMENT_SCORE}")
+    if (score := comment.score) < MIN_COM_SCORE_FETCH:
+        log_debug(
+            f"validation: comment score < {MIN_COM_SCORE_FETCH} (is {score})"
+        )
         return False
     else:
-        log_debug(f"validation: comment score > {MIN_COMMENT_SCORE}")
+        log_debug(
+            f"validation: comment score > {MIN_COM_SCORE_FETCH} (is {score})"
+        )
 
     if comment.edited is not False:
         log_debug("validation: edited comment")
@@ -102,7 +108,7 @@ def validate_comment(comment: Comment) -> bool:
     return True
 
 
-def validate_post(post: Submission, fetched_ids: FetchedIds) -> dict[bool]:
+def validate_post(post: Submission, fetched_ids: FetchedIds) -> dict:
     log_debug = partial(logger.debug, extra={"id": post.id})
     validation = {"is_unique": True, "is_valid": True}
     if post.author is None:
@@ -146,34 +152,34 @@ def get_answers(question: str) -> list:
 def google_query(question: str) -> list:
     query = f"site:www.reddit.com/r/askreddit {question}"
     pattern = r"comments\/([a-z0-9]{1,})\/"
-    candidates = []
+    candidates: list = []
     try:
-    for searched in search(query=query, num=3, stop=3, country="US"):
-        if (match := re.search(pattern=pattern, string=searched)) is not None:
-            googled = reddit.submission(match.group(1))
-        else:
-            logger.debug("googled: result not from r/askreddit")
-            continue
-        update_preferences(googled)
-        logger.debug(f"googled: {googled.title}", extra={"id": googled.id})
+        for searched in search(query=query, num=3, stop=3, country="US"):
+            if (match := re.search(pattern, searched)) is not None:
+                googled = reddit.submission(match.group(1))
+            else:
+                logger.debug("googled: result not from r/askreddit")
+                continue
+            update_preferences(googled)
+            logger.debug(f"googled: {googled.title}", extra={"id": googled.id})
             if age(googled, unit="day") < 14:  # 14 days
-            logger.debug("googled: post younger than 14 days")
-            continue
-        similarity = calculate_similarity(question, googled.title)
-        logger.debug(
-            f"googled: post score={googled.score}", extra={"id": googled.id}
-        )
-        if similarity > 0.95 and googled.score > MIN_POST_SCORE:
+                logger.debug("googled: post younger than 14 days")
+                continue
+            similarity = calculate_similarity(question, googled.title)
             logger.debug(
-                "googled: post eligible for parsing comments",
-                extra={"id": googled.id},
+                f"googled: post score={googled.score}", extra={"id": googled.id}
             )
-            candidates.extend(comment for comment in googled.comments)
-        else:
-            logger.debug(
-                "googled: post ineligible for parsing comments",
-                extra={"id": googled.id},
-            )
+            if similarity > 0.95 and googled.score > MIN_POST_SCORE:
+                logger.debug(
+                    "googled: post eligible for parsing comments",
+                    extra={"id": googled.id},
+                )
+                candidates.extend(comment for comment in googled.comments)
+            else:
+                logger.debug(
+                    "googled: post ineligible for parsing comments",
+                    extra={"id": googled.id},
+                )
     except HTTPError as exception:
         if exception.code == 429:
             logger.exception(f"googled: {exception.msg}", stack_info=True)
@@ -184,8 +190,35 @@ def google_query(question: str) -> list:
     return candidates
 
 
-def check_ban(user: Redditor):
+def check_ban(user: Redditor) -> bool:
     return user.is_suspended
+
+
+def check_shadowban(user: Redditor) -> Optional[bool]:
+    if check_ban(user):
+        log_str = f"{str(user)!r} is banned. Exiting the program."
+        logger.critical(log_str)
+        sys.exit(log_str)
+    response = requests.get(f"https://www.reddit.com/user/{str(user)}.json")
+    if response.status_code == 200:
+        req_comments = {
+            child["data"]["id"]
+            for child in response.json()["data"]["children"]
+            if child["kind"] == "t1"
+        }
+    else:
+        logger.warning(f"{response.status_code = }. skipping shadowban check")
+        return None
+    limit = min(response.json()["data"]["dist"], 100)
+    praw_comments = {comment.id for comment in user.comments.new(limit=limit)}
+    if diff := praw_comments.difference(req_comments):
+        if diff == praw_comments:
+            logger.critical(f"all latest {limit} comments are shadowbanned")
+        for id in diff:
+            logger.error(f"comment is shadowbanned", extra={"id": id})
+        return True
+    else:
+        return False
 
 
 def del_poor_performers():
@@ -290,31 +323,33 @@ def init_globals() -> None:
     except OSError as exception:
         logger.critical(str(exception), stack_info=True)
     else:
-        log_var = f"{nlp.meta['lang']}_{nlp.meta['name']}"
-        logger.debug(f"Loaded spaCy model {log_var!r}")
+        model_name = f"{nlp.meta['lang']}_{nlp.meta['name']}"
+        logger.debug(f"Loaded spaCy model {model_name!r}")
 
 
 def main() -> None:
     init_globals()
     subreddit = reddit.subreddit("askreddit")
     streams = {
-        "rising": subreddit.rising(limit=RISING_POST_LIMIT),
-        "new": subreddit.new(limit=NEW_POST_LIMIT),
+        "rising": subreddit.rising(limit=RISING_POST_LIM),
+        "new": subreddit.new(limit=NEW_POST_LIM),
     }
     for sort_type in streams:
         for question in get_questions(streams[sort_type]):
             answers: list = get_answers(question.title)
             post_answer(question, answers)
     del_poor_performers()
+    check_shadowban(reddit.user.me())
 
 
 if __name__ == "__main__":
     main()
 
 # TODO tesing
+# TODO Check about `configparser`
+# TODO job scheduling for checking bans
 # TODO verbose
 # TODO warning when `DB_MAX_ROWS` is set too low (minimum 100 is advised)
-# TODO FEATURE: dry run
 # TODO FEATURE: mutliple account instances
 # TODO FEATURE: proxy server support
 # TODO FEATURE: Shadowban checker

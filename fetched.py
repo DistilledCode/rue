@@ -1,7 +1,7 @@
 import datetime
 
 from logger import logger
-from utils import *
+from utils import DB_SOURCE, load_db
 
 
 class FetchedIds:

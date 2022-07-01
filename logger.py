@@ -1,7 +1,7 @@
 import datetime
 import logging
 
-from utils import *
+from utils import load_db, DB_SOURCE, MAX_LOGS
 
 
 class DBLogHandler(logging.Handler):
@@ -96,7 +96,7 @@ frmt = "{asctime} {levelname:^10} {filename}:{lineno}  {message}"
 formatter = logging.Formatter(frmt, style="{")
 db_handler = DBLogHandler()
 db_handler.setFormatter(formatter)
-db_handler.setLevel(logging.INFO)
+db_handler.setLevel(logging.DEBUG)
 stream_handler = logging.StreamHandler()
 stream_handler.setLevel(logging.INFO)
 stream_handler.setFormatter(formatter)

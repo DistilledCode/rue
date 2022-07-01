@@ -1,12 +1,18 @@
+import random
 import re
+import sys
 import time
 from functools import partial
+from urllib.error import HTTPError
 
 import praw
+import prawcore.exceptions
 import spacy
 from googlesearch import search
+from praw.exceptions import RedditAPIException
 from praw.models.listing.generator import ListingGenerator
 from praw.models.reddit.comment import Comment
+from praw.models.reddit.redditor import Redditor
 from praw.models.reddit.submission import Submission
 from prawcore.exceptions import Forbidden
 
@@ -132,6 +138,7 @@ def google_query(question: str) -> list:
     query = f"site:www.reddit.com/r/askreddit {question}"
     pattern = r"comments\/([a-z0-9]{1,})\/"
     candidates = []
+    try:
     for searched in search(query=query, num=3, stop=3, country="US"):
         if (match := re.search(pattern=pattern, string=searched)) is not None:
             googled = reddit.submission(match.group(1))
@@ -158,25 +165,74 @@ def google_query(question: str) -> list:
                 "googled: post ineligible for parsing comments",
                 extra={"id": googled.id},
             )
+    except HTTPError as exception:
+        if exception.code == 429:
+            logger.exception(f"googled: {exception.msg}", stack_info=True)
+            logger.info("googled: sleeping for 10 minutes & then retrying")
+            time.sleep(600)
+            google_query(question)
+        raise NotImplementedError
     return candidates
 
 
+def check_ban(user: Redditor):
+    return user.is_suspended
+
+
 def post_answer(question: Submission, answers: list):
-    if answers:
-        answer = answers[0]
-        if DRY_RUN:
-            pass
-        else:
-            question.reply(body=answer)
+    if not answers:
+        logger.info("answer: no valid comments found to post as answer")
+        return
+
+    answer = answers[0]
+    run = "DRY_RUN" if DRY_RUN else "LIVE_RUN"
+    if DRY_RUN:
         logger.info(
-            f"answer: [{answer.score}] {answer.body[:100]}...",
-            extra={"id": answer.id},
+            f"answer:{run =} [{answer.score}] {answer.body[:100]}...",
+            extra={"id": "dummy_id"},
         )
     else:
-        logger.info(
-            "answer: no valid comments found to post as answer",
-            extra={"type": "answer"},
-        )
+        try:
+            answer_id = question.reply(body=answer)
+            logger.info(
+                f"answer:{run =} [{answer.score}] {answer.body[:100]}...",
+                extra={"id": answer_id},
+            )
+            sleep_time = random.choice(SLEEP_TIME_LIST) * 60
+            logger.info(
+                f"answer: commented successfully. sleeping for {sleep_time}s"
+            )
+            time.sleep(sleep_time)
+        except prawcore.exceptions.Forbidden:
+            logger.critical(
+                "answer: action forbidden. Checking account ban.",
+                stack_info=True,
+            )
+            if check_ban(user := reddit.user.me()):
+                log_str = f"{str(user)!r} is banned. Exiting the program."
+                logger.critical(log_str, stack_info=True)
+                sys.exit(log_str)
+            else:
+                logger.critical(f"{str(user)} is not banned.")
+                sleep_time = random.choice(SLEEP_TIME_LIST) * 60
+                logger.info(
+                    f"asnwer: sleeping for {sleep_time} secs & retrying."
+                )
+                post_answer(question=question, answers=answers)
+        except RedditAPIException as exceptions:
+            if sleep_time := reddit._handle_rate_limit(exceptions):
+                logger.exception(
+                    f"answer: [RATELIMIT]: sleeping for {sleep_time} secs"
+                )
+                time.sleep(sleep_time)
+                logger.info("answer: retrying replying")
+                post_answer(question=question, answers=answers)
+            for exception in exceptions.items:
+                if exception.error_type == "BANNED_FROM_SUBREDDIT":
+                    usrname = str(reddit.user.me())
+                    log_str = f"answer: {usrname!r} banned from r/askreddit."
+                    logger.critical(log_str, stack_info=True)
+                    sys.exit(log_str)
 
 
 def get_questions(stream: ListingGenerator):
@@ -202,16 +258,16 @@ def init_globals() -> None:
     global reddit, nlp
     try:
         reddit = praw.Reddit("arck")
-    except Exception:
-        logger.critical("Failed `.Reddit` initialization", stack_info=True)
+    except NoSectionError:
+        logger.critical("Failed `Reddit` initialization", stack_info=True)
     else:
         logger.debug(
             f"Initialized {reddit.__class__} {reddit.user.me().name!r}"
         )
     try:
         nlp = spacy.load("en_core_web_lg")
-    except Exception:
-        logger.critical("Failed loading spaCy model", stack_info=True)
+    except OSError as exception:
+        logger.critical(str(exception), stack_info=True)
     else:
         log_var = f"{nlp.meta['lang']}_{nlp.meta['name']}"
         logger.debug(f"Loaded spaCy model {log_var!r}")

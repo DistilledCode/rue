@@ -59,28 +59,44 @@ def validate_comment(comment: Comment) -> bool:
     if comment.score < MIN_COMMENT_SCORE:
         log_debug(f"validation: comment score < {MIN_COMMENT_SCORE}")
         return False
+    else:
+        log_debug(f"validation: comment score > {MIN_COMMENT_SCORE}")
+
     if comment.edited is not False:
         log_debug("validation: edited comment")
         return False
+    else:
+        log_debug("validation: unedited comment")
+
     if comment.stickied is True:
         log_debug(f"validation: stickied comment")
         return False
+    else:
+        log_debug(f"validation: non-stickied comment")
+
     if comment.author is None:
-        log_debug("validation: deleted or removed comment")
+        log_debug("validation: deleted or removed comment (body unavailable)")
         return False
+    else:
+        log_debug("validation: body available")
     if prp_ratio(comment) > 0.1:
         log_debug(f"validation: comment personal pronoun ratio > 0.1")
         return False
+    else:
+        log_debug(f"validation: comment personal pronoun ratio < 0.1")
     return True
 
 
-def validate_post(post: Submission, fetchedids: FetchedIds) -> dict[bool]:
+def validate_post(post: Submission, fetched_ids: FetchedIds) -> dict[bool]:
     log_debug = partial(logger.debug, extra={"id": post.id})
     validation = {"is_unique": True, "is_valid": True}
     if post.author is None:
         validation["is_valid"] = False
-        log_debug("validation: deleted or removed post")
-    if (post.id,) in fetchedids.ids:
+        log_debug("validation: deleted or removed post (title unavaialble)")
+    else:
+        log_debug("validation: post title avaialble")
+
+    if (post.id,) in fetched_ids.ids:
         validation["is_unique"] = False
         log_debug("validation: duplicate post (fetched earlier)")
     else:
@@ -89,6 +105,8 @@ def validate_post(post: Submission, fetchedids: FetchedIds) -> dict[bool]:
     if len(nlp(post.title)) > MAX_TOKEN_LEN:
         validation["is_valid"] = False
         log_debug(f"validation: post token length > {MAX_TOKEN_LEN}")
+    else:
+        log_debug(f"validation: post token length < {MAX_TOKEN_LEN}")
     return validation
 
 
@@ -98,10 +116,14 @@ def get_answers(question: str) -> list:
     if candidates:
         for comment in candidates:
             if validate_comment(comment):
-                logger.info("comment: valid", extra={"id": comment.id})
+                logger.debug(
+                    "comment: valid as answer", extra={"id": comment.id}
+                )
                 answers.append(comment)
             else:
-                logger.info("comment: invalid", extra={"id": comment.id})
+                logger.debug(
+                    "comment: invalid as answer", extra={"id": comment.id}
+                )
         answers.sort(key=lambda x: x.score, reverse=True)
     return answers
 
@@ -117,7 +139,7 @@ def google_query(question: str) -> list:
             logger.debug("googled: result not from r/askreddit")
             continue
         update_preferences(googled)
-        logger.info(f"googled: {googled.title}", extra={"id": googled.id})
+        logger.debug(f"googled: {googled.title}", extra={"id": googled.id})
         if post_age(googled) < 14:  # 14 days
             logger.debug("googled: post younger than 14 days")
             continue
@@ -126,25 +148,81 @@ def google_query(question: str) -> list:
             f"googled: post score={googled.score}", extra={"id": googled.id}
         )
         if similarity > 0.95 and googled.score > MIN_POST_SCORE:
-            logger.info(
+            logger.debug(
                 "googled: post eligible for parsing comments",
                 extra={"id": googled.id},
             )
             candidates.extend(comment for comment in googled.comments)
         else:
-            logger.info(
+            logger.debug(
                 "googled: post ineligible for parsing comments",
                 extra={"id": googled.id},
             )
     return candidates
 
 
+def post_answer(question: Submission, answers: list):
+    if answers:
+        answer = answers[0]
+        if DRY_RUN:
+            pass
+        else:
+            question.reply(body=answer)
+        logger.info(
+            f"answer: [{answer.score}] {answer.body[:100]}...",
+            extra={"id": answer.id},
+        )
+    else:
+        logger.info(
+            "answer: no valid comments found to post as answer",
+            extra={"type": "answer"},
+        )
+
+
+def get_questions(stream: ListingGenerator):
+    fetched_ids: FetchedIds = FetchedIds()
+    for question in stream:
+        logger_debug = partial(logger.debug, extra={"id": question.id})
+        logger.info(f"question: {question.title}")
+        post: dict = validate_post(question, fetched_ids)
+        if post["is_unique"]:
+            fetched_ids.update(question.id)
+        while len(fetched_ids) > MAX_FETCHED_IDS:
+            fetched_ids.bisect()
+        if not post["is_unique"] or not post["is_valid"]:
+            logger_debug("question: invalid for answering")
+            continue
+        else:
+            logger_debug("question: valid for answering")
+
+        yield question
+
+
+def init_globals() -> None:
+    global reddit, nlp
+    try:
+        reddit = praw.Reddit("arck")
+    except Exception:
+        logger.critical("Failed `.Reddit` initialization", stack_info=True)
+    else:
+        logger.debug(
+            f"Initialized {reddit.__class__} {reddit.user.me().name!r}"
+        )
+    try:
+        nlp = spacy.load("en_core_web_lg")
+    except Exception:
+        logger.critical("Failed loading spaCy model", stack_info=True)
+    else:
+        log_var = f"{nlp.meta['lang']}_{nlp.meta['name']}"
+        logger.debug(f"Loaded spaCy model {log_var!r}")
+
+
 def main() -> None:
     init_globals()
     subreddit = reddit.subreddit("askreddit")
     streams = {
-        "new": subreddit.new(limit=NEW_POST_LIMIT),
         "rising": subreddit.rising(limit=RISING_POST_LIMIT),
+        "new": subreddit.new(limit=NEW_POST_LIMIT),
     }
     for sort_type in streams:
         for question in get_questions(streams[sort_type]):
@@ -152,72 +230,10 @@ def main() -> None:
             post_answer(question, answers)
 
 
-def post_answer(question: Submission, answers: list):
-    if answers:
-        if DRY_RUN:
-            for answer in answers:
-                logger.info(
-                    f"answer: [{answer.score}] {answer.body[:100]}...",
-                    extra={"id": answer.id},
-                )
-        else:
-            answer = answers[0]
-            logger.info(
-                f"answer: [{answer.score}] {answer.body[:100]}...",
-                extra={"id": answer.id},
-            )
-            question.reply(answer)
-    else:
-        logger.info(
-            "answer: no valid comments to post as answer",
-            extra={"type": "answer"},
-        )
-
-
-def init_globals() -> None:
-    global reddit, nlp, logger
-    logger = get_logger()
-    try:
-        reddit = praw.Reddit("arck")
-    except Exception:
-        logger.critical("Failed `.Reddit` initialization", stack_info=True)
-    else:
-        username = reddit.user.me().name
-        log_str = f"Successfully initialized {reddit.__class__} {username=}"
-        logger.debug(log_str)
-    try:
-        nlp = spacy.load("en_core_web_lg")
-    except Exception:
-        logger.critical("Failed loading spaCy model", stack_info=True)
-    else:
-        log_var = f"{nlp.meta['lang']}_{nlp.meta['name']}"
-        logger.debug(f"Successfully loaded spaCy model {log_var!r}")
-
-
-def get_questions(stream: ListingGenerator):
-    fetchedids: FetchedIds = FetchedIds()
-    for question in stream:
-        logger_info = partial(logger.info, extra={"id": question.id})
-        logger_info(f"question: {question.title}")
-        post: dict = validate_post(question, fetchedids)
-        if post["is_unique"]:
-            fetchedids.update(question.id)
-        while len(fetchedids) > MAX_FETCHED_IDS:
-            fetchedids.bisect()
-        if not post["is_unique"] or not post["is_valid"]:
-            logger_info("question: is invalid")
-            continue
-        else:
-            logger_info("question: is valid")
-
-        yield question
-
-
 if __name__ == "__main__":
     main()
 
 # TODO tesing
-# TODO logging (partially done)
 # TODO verbose
 # TODO warning when `DB_MAX_ROWS` is set too low (minimum 100 is advised)
 # TODO FEATURE: dry run
@@ -230,10 +246,3 @@ if __name__ == "__main__":
 # * parse your comment replies and act accordingly?
 # * -- seach for keywrods?
 # * -- Check if comment contains a link leads to original post/comment?
-
-
-# question
-# googled
-# comment
-# answer
-# validation

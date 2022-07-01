@@ -42,8 +42,17 @@ def sanitize(title: str) -> str:
     return title.strip()
 
 
-def post_age(post: Submission) -> float:
-    return (time.time() - post.created_utc) / (24 * 60 * 60)
+def age(obj: Union[Submission, Comment], unit: str = "second") -> float:
+    available_units = {
+        "second": 1,
+        "minute": 60,
+        "hour": 60 * 60,
+        "day": 60 * 60 * 24,
+        "week": 60 * 60 * 24 * 7,
+    }
+    assert unit in available_units
+    conversion = available_units[unit]
+    return (time.time() - obj.created_utc) / conversion
 
 
 def prp_ratio(comment: Comment) -> float:
@@ -147,7 +156,7 @@ def google_query(question: str) -> list:
             continue
         update_preferences(googled)
         logger.debug(f"googled: {googled.title}", extra={"id": googled.id})
-        if post_age(googled) < 14:  # 14 days
+            if age(googled, unit="day") < 14:  # 14 days
             logger.debug("googled: post younger than 14 days")
             continue
         similarity = calculate_similarity(question, googled.title)
@@ -177,6 +186,18 @@ def google_query(question: str) -> list:
 
 def check_ban(user: Redditor):
     return user.is_suspended
+
+
+def del_poor_performers():
+    all_comments = reddit.user.me().comments.new(limit=None)
+    target_comments = (i for i in all_comments if i.score < MIN_COM_SCORE_SELF)
+    for comment in target_comments:
+        if age(comment, unit="hour") > MATURING_TIME:
+            reddit.comment(comment.id).delete()
+            logger.debug(
+                f"deleted comment for poor performance. ({comment.score})",
+                extra={"id": comment.id},
+            )
 
 
 def post_answer(question: Submission, answers: list):
@@ -284,6 +305,7 @@ def main() -> None:
         for question in get_questions(streams[sort_type]):
             answers: list = get_answers(question.title)
             post_answer(question, answers)
+    del_poor_performers()
 
 
 if __name__ == "__main__":

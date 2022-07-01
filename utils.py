@@ -10,15 +10,18 @@ DB_SOURCE = {
     "user": "postgres",
     "password": "one",
 }
-MAX_FETCHED_IDS = 100
+MAX_FETCHED_IDS = 1000
 # MAX_LOGS >2 is must or it will log _bisect() messages recursively infinitely
-MAX_LOGS = 10000
-NEW_POST_LIMIT = 6
-RISING_POST_LIMIT = 6
-MIN_COMMENT_SCORE = 50
-MIN_POST_SCORE = 100
-DRY_RUN = True
+MAX_LOGS = 10**5
+NEW_POST_LIM = 10
+RISING_POST_LIM = 10
+MIN_COM_SCORE_FETCH = 100
+MIN_POST_SCORE = 500
+DRY_RUN = False
 MAX_TOKEN_LEN = 20
+MATURING_TIME = 3  # hours
+MIN_COM_SCORE_SELF = 20
+SLEEP_TIME_LIST = [5, 10, 15]
 
 
 @contextmanager

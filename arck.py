@@ -260,18 +260,16 @@ def post_answer(question: Submission, answers: list):
         except prawcore.exceptions.Forbidden:
             logger.critical(
                 "answer: action forbidden. Checking account ban.",
-                stack_info=True,
+            exc_info=True,
             )
             if check_ban(user := reddit.user.me()):
                 log_str = f"{str(user)!r} is banned. Exiting the program."
-                logger.critical(log_str, stack_info=True)
+            logger.critical(log_str, exc_info=True)
                 sys.exit(log_str)
             else:
                 logger.critical(f"{str(user)} is not banned.")
                 sleep_time = random.choice(SLEEP_TIME_LIST) * 60
-                logger.info(
-                    f"asnwer: sleeping for {sleep_time} secs & retrying."
-                )
+            logger.info(f"asnwer: sleeping for {sleep_time} secs & retrying.")
                 post_answer(question=question, answers=answers)
         except RedditAPIException as exceptions:
             if sleep_time := reddit._handle_rate_limit(exceptions):
@@ -313,7 +311,7 @@ def init_globals() -> None:
     try:
         reddit = praw.Reddit("arck")
     except NoSectionError:
-        logger.critical("Failed `Reddit` initialization", stack_info=True)
+        logger.critical("Failed `Reddit` initialization", exc_info=True)
     else:
         logger.debug(
             f"Initialized {reddit.__class__} {reddit.user.me().name!r}"
@@ -321,7 +319,7 @@ def init_globals() -> None:
     try:
         nlp = spacy.load("en_core_web_lg")
     except OSError as exception:
-        logger.critical(str(exception), stack_info=True)
+        logger.critical(str(exception), exc_info=True)
     else:
         model_name = f"{nlp.meta['lang']}_{nlp.meta['name']}"
         logger.debug(f"Loaded spaCy model {model_name!r}")
@@ -344,18 +342,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-# TODO tesing
-# TODO Check about `configparser`
-# TODO job scheduling for checking bans
-# TODO verbose
-# TODO warning when `DB_MAX_ROWS` is set too low (minimum 100 is advised)
-# TODO FEATURE: mutliple account instances
-# TODO FEATURE: proxy server support
-# TODO FEATURE: Shadowban checker
-# TODO FEATURE: checking visibility of all (or all) comments after sometime
-
-# * include other q/a based subreddits?
-# * parse your comment replies and act accordingly?
-# * -- seach for keywrods?
-# * -- Check if comment contains a link leads to original post/comment?

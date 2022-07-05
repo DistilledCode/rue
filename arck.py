@@ -28,8 +28,10 @@ def calculate_similarity(asked_title: str, googled_title: str) -> float:
     googled_title = sanitize(googled_title)
     nlp_asked = nlp(asked_title)
     nlp_googled = nlp(googled_title)
-    logger.debug(f"Similarity: {(sim := nlp_asked.similarity(nlp_googled))}")
-    return sim
+    logger.debug(
+        f"Similarity: {(similarity := nlp_asked.similarity(nlp_googled))}"
+    )
+    return similarity
 
 
 def sanitize(title: str) -> str:
@@ -45,15 +47,13 @@ def sanitize(title: str) -> str:
 
 
 def age(obj: Union[Submission, Comment], unit: str = "second") -> float:
-    available_units = {
+    conversion = {
         "second": 1,
         "minute": 60,
-        "hour": 60 * 60,
-        "day": 60 * 60 * 24,
-        "week": 60 * 60 * 24 * 7,
-    }
-    assert unit in available_units
-    conversion = available_units[unit]
+        "hour": 3600,
+        "day": 86400,
+        "week": 604800,
+    }.get(unit, 1)
     return (time.time() - obj.created_utc) / conversion
 
 
@@ -113,9 +113,9 @@ def validate_post(post: Submission, fetched_ids: FetchedIds) -> dict:
     validation = {"is_unique": True, "is_valid": True}
     if post.author is None:
         validation["is_valid"] = False
-        log_debug("validation: deleted or removed post (title unavaialble)")
+        log_debug("validation: deleted or removed post (attrs unavaialble)")
     else:
-        log_debug("validation: post title avaialble")
+        log_debug("validation: post attributes avaialble")
 
     if (post.id,) in fetched_ids.ids:
         validation["is_unique"] = False
@@ -200,16 +200,15 @@ def check_shadowban(user: Redditor) -> Optional[bool]:
         logger.critical(log_str)
         sys.exit(log_str)
     response = requests.get(f"https://www.reddit.com/user/{str(user)}.json")
-    if response.status_code == 200:
-        req_comments = {
-            child["data"]["id"]
-            for child in response.json()["data"]["children"]
-            if child["kind"] == "t1"
-        }
-    else:
+    if response.status_code != 200:
         logger.warning(f"{response.status_code = }. skipping shadowban check")
         return None
-    limit = min(response.json()["data"]["dist"], 100)
+    req_comments = {
+        child["data"]["id"]
+        for child in response.json()["data"]["children"]
+        if child["kind"] == "t1"
+    }
+    limit = min(len(req_comments), 100)
     praw_comments = {comment.id for comment in user.comments.new(limit=limit)}
     if diff := praw_comments.difference(req_comments):
         if diff == praw_comments:
@@ -221,7 +220,7 @@ def check_shadowban(user: Redditor) -> Optional[bool]:
         return False
 
 
-def del_poor_performers():
+def del_poor_performers() -> None:
     all_comments = reddit.user.me().comments.new(limit=None)
     target_comments = (i for i in all_comments if i.score < MIN_COM_SCORE_SELF)
     for comment in target_comments:
@@ -233,7 +232,7 @@ def del_poor_performers():
             )
 
 
-def post_answer(question: Submission, answers: list):
+def post_answer(question: Submission, answers: list) -> None:
     if not answers:
         logger.info("answer: no valid comments found to post as answer")
         return
@@ -245,49 +244,50 @@ def post_answer(question: Submission, answers: list):
             f"answer:{run =} [{answer.score}] {answer.body[:100]}...",
             extra={"id": "dummy_id"},
         )
-    else:
-        try:
-            answer_id = question.reply(body=answer)
-            logger.info(
-                f"answer:{run =} [{answer.score}] {answer.body[:100]}...",
-                extra={"id": answer_id},
-            )
+        return
+    try:
+        answer_id = question.reply(body=answer)
+        logger.info(
+            f"answer:{run =} [{answer.score}] {answer.body[:100]}...",
+            extra={"id": answer_id},
+        )
+        sleep_time = random.choice(SLEEP_TIME_LIST) * 60
+        logger.info(
+            f"answer: commented successfully. sleeping for {sleep_time}s"
+        )
+        time.sleep(sleep_time)
+    except prawcore.exceptions.Forbidden:
+        logger.critical(
+            "answer: action forbidden. Checking account ban.",
+            exc_info=True,
+        )
+        if check_ban(user := reddit.user.me()):
+            log_str = f"{str(user)!r} is banned. Exiting the program."
+            logger.critical(log_str, exc_info=True)
+            sys.exit(log_str)
+        else:
+            logger.critical(f"{str(user)} is not banned.")
             sleep_time = random.choice(SLEEP_TIME_LIST) * 60
-            logger.info(
-                f"answer: commented successfully. sleeping for {sleep_time}s"
+            logger.info(f"asnwer: sleeping for {sleep_time} secs & retrying.")
+            post_answer(question=question, answers=answers)
+    except RedditAPIException as exceptions:
+        if sleep_time := reddit._handle_rate_limit(exceptions):
+            logger.exception(
+                f"answer: [RATELIMIT]: sleeping for {sleep_time}s & retrying."
             )
             time.sleep(sleep_time)
-        except prawcore.exceptions.Forbidden:
-            logger.critical(
-                "answer: action forbidden. Checking account ban.",
-            exc_info=True,
-            )
-            if check_ban(user := reddit.user.me()):
-                log_str = f"{str(user)!r} is banned. Exiting the program."
-            logger.critical(log_str, exc_info=True)
+            post_answer(question=question, answers=answers)
+        for exception in exceptions.items:
+            if exception.error_type == "BANNED_FROM_SUBREDDIT":
+                usrname = str(reddit.user.me())
+                log_str = f"answer: {usrname!r} banned from r/askreddit."
+                logger.critical(log_str, exc_info=True)
                 sys.exit(log_str)
-            else:
-                logger.critical(f"{str(user)} is not banned.")
-                sleep_time = random.choice(SLEEP_TIME_LIST) * 60
-            logger.info(f"asnwer: sleeping for {sleep_time} secs & retrying.")
-                post_answer(question=question, answers=answers)
-        except RedditAPIException as exceptions:
-            if sleep_time := reddit._handle_rate_limit(exceptions):
-                logger.exception(
-                    f"answer: [RATELIMIT]: sleeping for {sleep_time} secs"
-                )
-                time.sleep(sleep_time)
-                logger.info("answer: retrying replying")
-                post_answer(question=question, answers=answers)
-            for exception in exceptions.items:
-                if exception.error_type == "BANNED_FROM_SUBREDDIT":
-                    usrname = str(reddit.user.me())
-                    log_str = f"answer: {usrname!r} banned from r/askreddit."
-                    logger.critical(log_str, stack_info=True)
-                    sys.exit(log_str)
 
 
-def get_questions(stream: ListingGenerator):
+def get_questions(
+    stream: ListingGenerator,
+) -> Generator[Submission, None, None]:
     fetched_ids: FetchedIds = FetchedIds()
     for question in stream:
         logger_debug = partial(logger.debug, extra={"id": question.id})

@@ -11,6 +11,7 @@ import praw
 import prawcore.exceptions
 import requests
 import spacy
+from alive_progress import alive_bar
 from googlesearch import search
 from praw.exceptions import RedditAPIException
 from praw.models.listing.generator import ListingGenerator
@@ -21,6 +22,25 @@ from praw.models.reddit.submission import Submission
 from fetched import FetchedIds
 from logger import logger
 from utils import *
+
+
+def sleepfor(total_time: int) -> None:
+    sleep_per_loop = 1
+    total = int(total_time / sleep_per_loop)
+    bar = alive_bar(
+        length=50,
+        total=total,
+        bar="classic2",
+        spinner="classic",
+        monitor=False,
+        elapsed=False,
+        stats_end=False,
+        stats="waking up in {eta} (approx)",
+    )
+    with bar as bar:
+        for _ in range(total):
+            time.sleep(sleep_per_loop)
+            bar()
 
 
 def calculate_similarity(asked_title: str, googled_title: str) -> float:
@@ -184,7 +204,7 @@ def google_query(question: str) -> list:
         if exception.code == 429:
             logger.exception(f"googled: {exception.msg}", stack_info=True)
             logger.info("googled: sleeping for 10 minutes & then retrying")
-            time.sleep(600)
+            sleepfor(total_time=600)
             google_query(question)
         raise NotImplementedError
     return candidates
@@ -255,7 +275,7 @@ def post_answer(question: Submission, answers: list) -> None:
         logger.info(
             f"answer: commented successfully. sleeping for {sleep_time}s"
         )
-        time.sleep(sleep_time)
+        sleepfor(total_time=sleep_time)
     except prawcore.exceptions.Forbidden:
         logger.critical(
             "answer: action forbidden. Checking account ban.",
@@ -275,7 +295,7 @@ def post_answer(question: Submission, answers: list) -> None:
             logger.exception(
                 f"answer: [RATELIMIT]: sleeping for {sleep_time}s & retrying."
             )
-            time.sleep(sleep_time)
+            sleepfor(total_time=sleep_time)
             post_answer(question=question, answers=answers)
         for exception in exceptions.items:
             if exception.error_type == "BANNED_FROM_SUBREDDIT":

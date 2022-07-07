@@ -210,6 +210,15 @@ def google_query(question: str) -> list:
     return candidates
 
 
+def cleanup(user: Redditor):
+    while True:
+        comments = user.comments.new(limit=None)
+        for comment in comments:
+            reddit.comment(comment.id).delete()
+        if comments._exhausted is True:
+            break
+
+
 def check_ban(user: Redditor) -> bool:
     return user.is_suspended
 
@@ -358,6 +367,9 @@ def main() -> None:
             post_answer(question, answers)
     del_poor_performers()
     check_shadowban(reddit.user.me())
+    user = reddit.user.me()
+    if user.comment_karma + user.link_karm >= SCORE_TARGET:
+        cleanup(user=user)
 
 
 if __name__ == "__main__":

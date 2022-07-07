@@ -206,17 +206,22 @@ def google_query(question: str) -> list:
             logger.info("googled: sleeping for 10 minutes & then retrying")
             sleepfor(total_time=600)
             google_query(question)
-        raise NotImplementedError
     return candidates
 
 
-def cleanup(user: Redditor):
-    while True:
-        comments = user.comments.new(limit=None)
-        for comment in comments:
-            reddit.comment(comment.id).delete()
-        if comments._exhausted is True:
-            break
+def cleanup(user: Redditor) -> None:
+    comments = user.comments.new(limit=None)
+    for comment in comments:
+        reddit.comment(comment.id).delete()
+        logger.debug("user: comment deleted", extra={"id": comment.id})
+
+    # `_exhausted` attr of ListingGenerator is True when it runs out
+    #  of any more ids to return. But as it's a lazy object, we have
+    #  to fetch any of it's attr first to get the real value.
+    if comments._exhausted is True:
+        return
+    else:
+        cleanup(user=user)
 
 
 def check_ban(user: Redditor) -> bool:
@@ -356,6 +361,7 @@ def init_globals() -> None:
 
 def main() -> None:
     init_globals()
+    user = reddit.user.me()
     subreddit = reddit.subreddit("askreddit")
     streams = {
         "rising": subreddit.rising(limit=RISING_POST_LIM),
@@ -366,10 +372,12 @@ def main() -> None:
             answers: list = get_answers(question.title)
             post_answer(question, answers)
     del_poor_performers()
-    check_shadowban(reddit.user.me())
-    user = reddit.user.me()
-    if user.comment_karma + user.link_karm >= SCORE_TARGET:
+    check_shadowban(user=user)
+    if user.comment_karma + user.link_karma >= SCORE_TARGET:
+        logger.info("user: target score reached. removing comments")
         cleanup(user=user)
+        logger.info("user: all comments removed. exiting the program")
+        sys.exit()
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ MATURING_TIME = 3  # hours
 MIN_COM_SCORE_SELF = 20
 SCORE_TARGET = 1000
 SLEEP_TIME_LIST = [5, 10, 15]
+CLEAN_SLATE = True
 
 
 @contextmanager

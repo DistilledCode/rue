@@ -209,19 +209,31 @@ def google_query(question: str) -> list:
     return candidates
 
 
-def cleanup(user: Redditor) -> None:
-    comments = user.comments.new(limit=None)
-    for comment in comments:
-        reddit.comment(comment.id).delete()
-        logger.debug("user: comment deleted", extra={"id": comment.id})
+def cleanup(user: Redditor) -> bool:
+    if (total_karma := user.comment_karma + user.link_karma) <= SCORE_TARGET:
+        return False
+    if not CLEAN_SLATE:
+        logger.info(f"user: target reached. exiting. {total_karma = }")
+        return True
 
-    # `_exhausted` attr of ListingGenerator is True when it runs out
-    #  of any more ids to return. But as it's a lazy object, we have
-    #  to fetch any of it's attr first to get the real value.
-    if comments._exhausted is True:
-        return
-    else:
-        cleanup(user=user)
+    logger.info(f"user: target reached. removing content. {total_karma=}")
+
+    def cleanup_comments():
+        comments = user.comments.new(limit=None)
+        for comment in comments:
+            reddit.comment(comment.id).delete()
+            logger.debug("user: comment deleted", extra={"id": comment.id})
+
+        # `_exhausted` attr of ListingGenerator is True when it runs out
+        #  of any more ids to return. But as it's a lazy object, we have
+        #  to fetch any of it's attr first to get the real value.
+        if comments._exhausted is True:
+            return
+        else:
+            cleanup_comments()
+
+    logger.info("user: all content removed. exiting the program")
+    return True
 
 
 def check_ban(user: Redditor) -> bool:
@@ -373,10 +385,7 @@ def main() -> None:
             post_answer(question, answers)
     del_poor_performers()
     check_shadowban(user=user)
-    if user.comment_karma + user.link_karma >= SCORE_TARGET:
-        logger.info("user: target score reached. removing comments")
-        cleanup(user=user)
-        logger.info("user: all comments removed. exiting the program")
+    if cleanup(user=user):
         sys.exit()
 
 

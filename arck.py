@@ -48,9 +48,7 @@ def calculate_similarity(asked_title: str, googled_title: str) -> float:
     googled_title = sanitize(googled_title)
     nlp_asked = nlp(asked_title)
     nlp_googled = nlp(googled_title)
-    logger.debug(
-        f"Similarity: {(similarity := nlp_asked.similarity(nlp_googled))}"
-    )
+    logger.debug(f"Similarity: {(similarity := nlp_asked.similarity(nlp_googled))}")
     return similarity
 
 
@@ -81,8 +79,7 @@ def prp_ratio(comment: Comment) -> float:
     personal_pronouns = ("PRP", "PRP$")
     doc = nlp(comment.body)
     prp_count = sum(True for token in doc if token.tag_ in personal_pronouns)
-    ratio = prp_count / len(doc)
-    return ratio
+    return prp_count / len(doc)
 
 
 def update_preferences(googled: Submission) -> None:
@@ -94,14 +91,10 @@ def update_preferences(googled: Submission) -> None:
 def validate_comment(comment: Comment) -> bool:
     log_debug = partial(logger.debug, extra={"id": comment.id})
     if (score := comment.score) < MIN_COM_SCORE_FETCH:
-        log_debug(
-            f"validation: comment score < {MIN_COM_SCORE_FETCH} (is {score})"
-        )
+        log_debug(f"validation: comment score < {MIN_COM_SCORE_FETCH} (is {score})")
         return False
     else:
-        log_debug(
-            f"validation: comment score > {MIN_COM_SCORE_FETCH} (is {score})"
-        )
+        log_debug(f"validation: comment score > {MIN_COM_SCORE_FETCH} (is {score})")
 
     if comment.edited is not False:
         log_debug("validation: edited comment")
@@ -157,14 +150,10 @@ def get_answers(question: str) -> list:
     if candidates:
         for comment in candidates:
             if validate_comment(comment):
-                logger.debug(
-                    "comment: valid as answer", extra={"id": comment.id}
-                )
+                logger.debug("comment: valid as answer", extra={"id": comment.id})
                 answers.append(comment)
             else:
-                logger.debug(
-                    "comment: invalid as answer", extra={"id": comment.id}
-                )
+                logger.debug("comment: invalid as answer", extra={"id": comment.id})
         answers.sort(key=lambda x: x.score, reverse=True)
     return answers
 
@@ -298,9 +287,7 @@ def post_answer(question: Submission, answers: list) -> None:
             extra={"id": answer_id},
         )
         sleep_time = random.choice(SLEEP_TIME_LIST) * 60
-        logger.info(
-            f"answer: commented successfully. sleeping for {sleep_time}s"
-        )
+        logger.info(f"answer: commented successfully. sleeping for {sleep_time}s")
         sleepfor(total_time=sleep_time)
     except prawcore.exceptions.Forbidden:
         logger.critical(
@@ -359,9 +346,7 @@ def init_globals() -> None:
     except NoSectionError:
         logger.critical("Failed `Reddit` initialization", exc_info=True)
     else:
-        logger.debug(
-            f"Initialized {reddit.__class__} {reddit.user.me().name!r}"
-        )
+        logger.debug(f"Initialized {reddit.__class__} {reddit.user.me().name!r}")
     try:
         nlp = spacy.load("en_core_web_lg")
     except OSError as exception:

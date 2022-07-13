@@ -1,0 +1,48 @@
+dry_run:
+  type: boolean
+
+max_logs:
+  type: integer
+  min: 3
+
+max_unique_ids:
+  type: integer
+  min: 1
+
+new_post_lim:
+  type: integer
+  min: 1
+
+rising_post_lim:
+  type: integer
+  min: 1
+
+min_valid_com_score:
+  type: integer
+  min: 1
+
+min_valid_post_score:
+  type: integer
+  min: 1
+
+max_token_len:
+  type: integer
+  min: 1
+
+maturing_time:
+  type: integer
+  min: 1
+
+min_self_com_score:
+  type: integer
+  min: 1
+
+score_target:
+  type: integer
+  min: 1
+
+clean_slate:
+  type: boolean
+
+sleep_time:
+  type: range

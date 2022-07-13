@@ -1,0 +1,9 @@
+__pycache__
+venv-win
+praw.ini
+.secrets
+.google-cookie
+.gitattributes
+.todo
+.wakatime-project
+.vscode

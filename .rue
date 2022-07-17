@@ -24,3 +24,4 @@ score_target: 1000
 # must be wrapped in square brackets
 sleep_time: !!python/object/apply:builtins.range [1, 2, 3] # range(1,2,3)
 
+log_level: "info"

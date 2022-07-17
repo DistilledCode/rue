@@ -26,6 +26,8 @@ def _validate_config(validator: Validator, schema: dict, document: dict) -> None
             x = validator.document_error_tree[key].errors[0]
             print(f"\n{str('CONFIG VALIDATION ERROR'):=^55}")
             print(f"{key}: {val}")
+            if x.code in [68, 69]:
+                print(f"allowed values: {x.constraint}")
             print(f"value received: {x.value!r}\n")
             exit()
     return
@@ -38,12 +40,11 @@ def _read_files(file_dict: dict) -> dict:
             with open(file_dict[file], "r") as f:
                 file_obj = yaml.load(f, Loader=yaml.UnsafeLoader)
         except FileNotFoundError:
-            print_exc()
-            exit()
+            # TODO initialize the default file automatically?
+            raise
         except ConstructorError:
-            print_exc()
             print("\nArgument for 'sleep_time:' in '.rue' must be wrapped in '[]'.\n")
-            exit()
+            raise
         else:
             config_dict[file] = file_obj
     return config_dict

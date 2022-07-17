@@ -46,3 +46,7 @@ clean_slate:
 
 sleep_time:
   type: range
+
+log_level:
+  type: string
+  allowed: ["debug", "info", "warning", "error", "critical"]

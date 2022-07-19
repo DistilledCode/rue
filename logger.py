@@ -1,7 +1,9 @@
 import datetime
 import logging
 
-from utils import load_db, DB_SOURCE, MAX_LOGS
+from utils import DB_SOURCE, MAX_LOGS, load_db
+
+__all__ = ["logger"]
 
 
 class DBLogHandler(logging.Handler):
@@ -31,13 +33,13 @@ class DBLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         self.format(record=record)
         if record.exc_info is not None:
-            isexception = True
+            is_exception = True
             exc_traceback = "".join(i for i in record.exc_text)
         else:
-            isexception = False
+            is_exception = False
             exc_traceback = None
 
-        id = getattr(record, "id", None)
+        obj_id = getattr(record, "id", None)
         try:
             time_stamp = datetime.datetime.fromtimestamp(record.created)
             record_vals = (
@@ -45,9 +47,9 @@ class DBLogHandler(logging.Handler):
                 record.levelname,
                 f"{record.filename}:{record.lineno}",
                 record.funcName,
-                id,
+                obj_id,
                 record.message,
-                isexception,
+                is_exception,
                 exc_traceback,
                 record.stack_info,
             )
@@ -86,19 +88,23 @@ class DBLogHandler(logging.Handler):
             )
         self._update_record_num()
         # + 1 for this very record itself
-        log_str = f"Bisected {self.__class__} to lenght {self.record_num + 1}"
-        logger.debug(log_str)
+        logger.debug(f"Bisected {self.__class__} to lenght {self.record_num + 1}")
 
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-frmt = "{asctime} {levelname:^10} {filename}:{lineno}  {message}"
-formatter = logging.Formatter(frmt, style="{")
-db_handler = DBLogHandler()
-db_handler.setFormatter(formatter)
-db_handler.setLevel(logging.DEBUG)
-stream_handler = logging.StreamHandler()
-stream_handler.setLevel(logging.INFO)
-stream_handler.setFormatter(formatter)
-logger.addHandler(stream_handler)
-logger.addHandler(db_handler)
+def _get_logger():
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+    frmt = "{asctime} {levelname:^10} {filename}:{lineno}  {message}"
+    formatter = logging.Formatter(frmt, style="{")
+    db_handler = DBLogHandler()
+    db_handler.setFormatter(formatter)
+    db_handler.setLevel(logging.DEBUG)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.INFO)
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+    logger.addHandler(db_handler)
+    return logger
+
+
+logger = _get_logger()

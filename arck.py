@@ -158,10 +158,10 @@ def get_answers(question: str) -> list:
     return answers
 
 
-def google_query(question: str) -> list:
+def google_query(question: str) -> list[Comment]:
     query = f"site:www.reddit.com/r/askreddit {question}"
     pattern = r"comments\/([a-z0-9]{1,})\/"
-    candidates: list = []
+    candidates: list[Comment] = []
     try:
         for searched in search(query=query, num=3, stop=3, country="US"):
             if (match := re.search(pattern, searched)) is not None:
@@ -171,7 +171,7 @@ def google_query(question: str) -> list:
                 continue
             update_preferences(googled)
             logger.debug(f"googled: {googled.title}", extra={"id": googled.id})
-            if age(googled, unit="day") < 14:  # 14 days
+            if age(googled, unit="day") < 14:
                 logger.debug("googled: post younger than 14 days")
                 continue
             similarity = calculate_similarity(question, googled.title)
@@ -267,7 +267,7 @@ def del_poor_performers() -> None:
             )
 
 
-def post_answer(question: Submission, answers: list) -> None:
+def post_answer(question: Submission, answers: list[Comment]) -> None:
     if not answers:
         logger.info("answer: no valid comments found to post as answer")
         return
@@ -318,9 +318,7 @@ def post_answer(question: Submission, answers: list) -> None:
                 sys.exit(log_str)
 
 
-def get_questions(
-    stream: ListingGenerator,
-) -> Generator[Submission, None, None]:
+def get_questions(stream: ListingGenerator) -> Generator[Submission, None, None]:
     fetched_ids: FetchedIds = FetchedIds()
     for question in stream:
         logger_debug = partial(logger.debug, extra={"id": question.id})
@@ -366,7 +364,7 @@ def main() -> None:
     }
     for sort_type in streams:
         for question in get_questions(streams[sort_type]):
-            answers: list = get_answers(question.title)
+            answers: list[Comment] = get_answers(question.title)
             post_answer(question, answers)
     del_poor_performers()
     check_shadowban(user=user)

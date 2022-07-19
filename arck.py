@@ -19,7 +19,9 @@ from praw.models.reddit.comment import Comment
 from praw.models.reddit.redditor import Redditor
 from praw.models.reddit.submission import Submission
 
+from config import config
 from fetched import FetchedIds
+from langproc import paraphrase
 from logger import logger
 from utils import *
 
@@ -90,6 +92,13 @@ def update_preferences(googled: Submission) -> None:
 
 def validate_comment(comment: Comment) -> bool:
     log_debug = partial(logger.debug, extra={"id": comment.id})
+
+    if len(comment.body) > MAX_COM_CHAR_LEN:
+        log_debug(f"validation: comment characters length > {MAX_COM_CHAR_LEN}")
+        return False
+    else:
+        log_debug(f"validation: comment characters length < {MAX_COM_CHAR_LEN}")
+
     if (score := comment.score) < MIN_COM_SCORE_FETCH:
         log_debug(f"validation: comment score < {MIN_COM_SCORE_FETCH} (is {score})")
         return False
@@ -136,11 +145,11 @@ def validate_post(post: Submission, fetched_ids: FetchedIds) -> dict:
     else:
         log_debug("validation: unique post")
     # average token lenght of top 1000 posts is < 14
-    if len(nlp(post.title)) > MAX_TOKEN_LEN:
+    if len(nlp(post.title)) > MAX_POST_TOKEN_LEN:
         validation["is_valid"] = False
-        log_debug(f"validation: post token length > {MAX_TOKEN_LEN}")
+        log_debug(f"validation: post token length > {MAX_POST_TOKEN_LEN}")
     else:
-        log_debug(f"validation: post token length < {MAX_TOKEN_LEN}")
+        log_debug(f"validation: post token length < {MAX_POST_TOKEN_LEN}")
     return validation
 
 
@@ -271,8 +280,12 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
     if not answers:
         logger.info("answer: no valid comments found to post as answer")
         return
-
+    if config["paraphrase_method"] == "hugging_face":
+        # this might have a side effect of all answers being short. could be suspicious
+        answer.sort(key=lambda x: x.score / len(x.body), reverse=True)
     answer = answers[0]
+    if len(nlp(answer.body)) > 5:
+        answer.body = paraphrase(answer.body, config["paraphrase_method"])
     run = "DRY_RUN" if DRY_RUN else "LIVE_RUN"
     if DRY_RUN:
         logger.info(
@@ -281,7 +294,7 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
         )
         return
     try:
-        answer_id = question.reply(body=answer)
+        answer_id = question.reply(body=answer.body)
         logger.info(
             f"answer:{run =} [{answer.score}] {answer.body[:100]}...",
             extra={"id": answer_id},

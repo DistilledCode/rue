@@ -11,14 +11,15 @@ DB_SOURCE = {
     "password": "one",
 }
 MAX_FETCHED_IDS = 1000
-# MAX_LOGS >2 is must or it will log _bisect() messages recursively infinitely
+# MAX_LOGS >2 or it will log _bisect() messages recursively forever
 MAX_LOGS = 10**5
 NEW_POST_LIM = 10
 RISING_POST_LIM = 10
 MIN_COM_SCORE_FETCH = 100
 MIN_POST_SCORE = 500
 DRY_RUN = False
-MAX_TOKEN_LEN = 20
+MAX_POST_TOKEN_LEN = 20
+MAX_COM_CHAR_LEN = 150
 MATURING_TIME = 3  # hours
 MIN_COM_SCORE_SELF = 20
 SCORE_TARGET = 1000
@@ -28,6 +29,7 @@ CLEAN_SLATE = True
 
 @contextmanager
 def load_db(**kwargs) -> Generator[cursor, None, None]:
+    # TODO error handling
     if kwargs["url"] is not None:
         con = psycopg2.connect(kwargs["url"])
     else:

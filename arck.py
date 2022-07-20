@@ -4,6 +4,7 @@ import sys
 import time
 from configparser import NoSectionError
 from functools import partial
+from string import printable
 from typing import Optional, Union
 from urllib.error import HTTPError
 
@@ -98,6 +99,9 @@ def validate_comment(comment: Comment) -> bool:
         return False
     else:
         log_debug(f"validation: comment characters length < {MAX_COM_CHAR_LEN}")
+
+    if not all(i in printable for i in comment.body):
+        return False
 
     if (score := comment.score) < MIN_COM_SCORE_FETCH:
         log_debug(f"validation: comment score < {MIN_COM_SCORE_FETCH} (is {score})")

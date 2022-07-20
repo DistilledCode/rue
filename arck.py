@@ -86,7 +86,7 @@ def prp_ratio(comment: Comment) -> float:
 
 def update_preferences(googled: Submission) -> None:
     googled.comment_sort = "top"
-    googled.comment_limit = 20
+    googled.comment_limit = 50
     googled.comments.replace_more(limit=0)  # flattening the comment tree
 
 
@@ -280,12 +280,8 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
     if not answers:
         logger.info("answer: no valid comments found to post as answer")
         return
-    if config["paraphrase_method"] == "hugging_face":
-        # this might have a side effect of all answers being short. could be suspicious
-        answer.sort(key=lambda x: x.score / len(x.body), reverse=True)
     answer = answers[0]
-    if len(nlp(answer.body)) > 5:
-        answer.body = paraphrase(answer.body, config["paraphrase_method"])
+    answer.body = paraphrase(answer.body)
     run = "DRY_RUN" if DRY_RUN else "LIVE_RUN"
     if DRY_RUN:
         logger.info(
@@ -351,20 +347,13 @@ def get_questions(stream: ListingGenerator) -> Generator[Submission, None, None]
 
 
 def init_globals() -> None:
-    global reddit, nlp
+    global reddit
     try:
         reddit = praw.Reddit("arck")
     except NoSectionError:
         logger.critical("Failed `Reddit` initialization", exc_info=True)
     else:
         logger.debug(f"Initialized {reddit.__class__} {reddit.user.me().name!r}")
-    try:
-        nlp = spacy.load("en_core_web_lg")
-    except OSError as exception:
-        logger.critical(str(exception), exc_info=True)
-    else:
-        model_name = f"{nlp.meta['lang']}_{nlp.meta['name']}"
-        logger.debug(f"Loaded spaCy model {model_name!r}")
 
 
 def main() -> None:

@@ -54,7 +54,3 @@ sleep_time:
 log_level:
   type: string
   allowed: ["debug", "info", "warning", "error", "critical"]
-
-paraphrase_method:
-  type: string
-  allowed: ["hugging_face", "spinbot"]

@@ -16,7 +16,7 @@ min_valid_post_score: 500
 
 max_post_token_len: 20
 
-max_com_char_len: 150
+max_com_char_len: 1000
 
 maturing_time: 3 # hours
 
@@ -27,5 +27,3 @@ score_target: 1000
 sleep_time: !!python/object/apply:builtins.range [1, 2, 3] # range(1,2,3)
 
 log_level: "info"
-
-paraphrase_method: "hugging_face"

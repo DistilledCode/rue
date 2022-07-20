@@ -5,13 +5,12 @@ import time
 from configparser import NoSectionError
 from functools import partial
 from string import printable
-from typing import Optional, Union
+from typing import Generator, Optional, Union
 from urllib.error import HTTPError
 
 import praw
 import prawcore.exceptions
 import requests
-import spacy
 from alive_progress import alive_bar
 from googlesearch import search
 from praw.exceptions import RedditAPIException
@@ -20,11 +19,11 @@ from praw.models.reddit.comment import Comment
 from praw.models.reddit.redditor import Redditor
 from praw.models.reddit.submission import Submission
 
-from config import config
-from fetched import FetchedIds
+from config import cfg
 from langproc import paraphrase
 from logger import logger
-from utils import *
+from savedids import SavedIds
+from utils import nlp
 
 
 def sleepfor(total_time: int) -> None:
@@ -94,20 +93,24 @@ def update_preferences(googled: Submission) -> None:
 def validate_comment(comment: Comment) -> bool:
     log_debug = partial(logger.debug, extra={"id": comment.id})
 
-    if len(comment.body) > MAX_COM_CHAR_LEN:
-        log_debug(f"validation: comment characters length > {MAX_COM_CHAR_LEN}")
+    if len(comment.body) > cfg["max_com_char_len"]:
+        log_debug(f'validation: comment characters length > {cfg["max_com_char_len"]}')
         return False
     else:
-        log_debug(f"validation: comment characters length < {MAX_COM_CHAR_LEN}")
+        log_debug(f'validation: comment characters length < {cfg["max_com_char_len"]}')
 
     if not all(i in printable for i in comment.body):
         return False
 
-    if (score := comment.score) < MIN_COM_SCORE_FETCH:
-        log_debug(f"validation: comment score < {MIN_COM_SCORE_FETCH} (is {score})")
+    if (score := comment.score) < cfg["min_valid_com_score"]:
+        log_debug(
+            f"validation: comment score < {cfg['min_valid_com_score']} (is {score})"
+        )
         return False
     else:
-        log_debug(f"validation: comment score > {MIN_COM_SCORE_FETCH} (is {score})")
+        log_debug(
+            f"validation: comment score > {cfg['min_valid_com_score']} (is {score})"
+        )
 
     if comment.edited is not False:
         log_debug("validation: edited comment")
@@ -134,7 +137,7 @@ def validate_comment(comment: Comment) -> bool:
     return True
 
 
-def validate_post(post: Submission, fetched_ids: FetchedIds) -> dict:
+def validate_post(post: Submission, saved_ids: SavedIds) -> dict:
     log_debug = partial(logger.debug, extra={"id": post.id})
     validation = {"is_unique": True, "is_valid": True}
     if post.author is None:
@@ -143,17 +146,17 @@ def validate_post(post: Submission, fetched_ids: FetchedIds) -> dict:
     else:
         log_debug("validation: post attributes avaialble")
 
-    if (post.id,) in fetched_ids.ids:
+    if (post.id,) in saved_ids.ids:
         validation["is_unique"] = False
-        log_debug("validation: duplicate post (fetched earlier)")
+        log_debug("validation: duplicate post (saved earlier)")
     else:
         log_debug("validation: unique post")
     # average token lenght of top 1000 posts is < 14
-    if len(nlp(post.title)) > MAX_POST_TOKEN_LEN:
+    if len(nlp(post.title)) > cfg["max_post_token_len"]:
         validation["is_valid"] = False
-        log_debug(f"validation: post token length > {MAX_POST_TOKEN_LEN}")
+        log_debug(f"validation: post token length > {cfg['max_post_token_len']}")
     else:
-        log_debug(f"validation: post token length < {MAX_POST_TOKEN_LEN}")
+        log_debug(f"validation: post token length < {cfg['max_post_token_len']}")
     return validation
 
 
@@ -191,7 +194,7 @@ def google_query(question: str) -> list[Comment]:
             logger.debug(
                 f"googled: post score={googled.score}", extra={"id": googled.id}
             )
-            if similarity > 0.95 and googled.score > MIN_POST_SCORE:
+            if similarity > 0.95 and googled.score > cfg["min_valid_post_score"]:
                 logger.debug(
                     "googled: post eligible for parsing comments",
                     extra={"id": googled.id},
@@ -212,13 +215,13 @@ def google_query(question: str) -> list[Comment]:
 
 
 def cleanup(user: Redditor) -> bool:
-    if (total_karma := user.comment_karma + user.link_karma) <= SCORE_TARGET:
+    if (tot_karma := user.comment_karma + user.link_karma) <= cfg["acc_score_target"]:
         return False
-    if not CLEAN_SLATE:
-        logger.info(f"user: target reached. exiting. {total_karma = }")
+    if not cfg["clean_slate"]:
+        logger.info(f"user: target reached. exiting. {tot_karma = }")
         return True
 
-    logger.info(f"user: target reached. removing content. {total_karma=}")
+    logger.info(f"user: target reached. removing content. {tot_karma=}")
 
     def cleanup_comments():
         comments = user.comments.new(limit=None)
@@ -270,12 +273,12 @@ def check_shadowban(user: Redditor) -> Optional[bool]:
 
 def del_poor_performers() -> None:
     all_comments = reddit.user.me().comments.new(limit=None)
-    target_comments = (i for i in all_comments if i.score < MIN_COM_SCORE_SELF)
+    target_comments = (i for i in all_comments if i.score < cfg["min_self_com_score"])
     for comment in target_comments:
-        if age(comment, unit="hour") > MATURING_TIME:
+        if age(comment, unit="hour") > cfg["maturing_time"]:
             reddit.comment(comment.id).delete()
             logger.debug(
-                f"deleted comment for poor performance. ({comment.score})",
+                f"deleted poor performing comment. ({comment.score})",
                 extra={"id": comment.id},
             )
 
@@ -286,8 +289,8 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
         return
     answer = answers[0]
     answer.body = paraphrase(answer.body)
-    run = "DRY_RUN" if DRY_RUN else "LIVE_RUN"
-    if DRY_RUN:
+    run = "DRY_RUN" if cfg["dry_run"] else "LIVE_RUN"
+    if cfg["dry_run"]:
         logger.info(
             f"answer:{run =} [{answer.score}] {answer.body[:100]}...",
             extra={"id": "dummy_id"},
@@ -299,7 +302,7 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
             f"answer:{run =} [{answer.score}] {answer.body[:100]}...",
             extra={"id": answer_id},
         )
-        sleep_time = random.choice(SLEEP_TIME_LIST) * 60
+        sleep_time = random.choice(cfg["sleep_time"]) * 60
         logger.info(f"answer: commented successfully. sleeping for {sleep_time}s")
         sleepfor(total_time=sleep_time)
     except prawcore.exceptions.Forbidden:
@@ -313,7 +316,7 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
             sys.exit(log_str)
         else:
             logger.critical(f"{str(user)} is not banned.")
-            sleep_time = random.choice(SLEEP_TIME_LIST) * 60
+            sleep_time = random.choice(cfg["sleep_time"]) * 60
             logger.info(f"asnwer: sleeping for {sleep_time} secs & retrying.")
             post_answer(question=question, answers=answers)
     except RedditAPIException as exceptions:
@@ -332,15 +335,15 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
 
 
 def get_questions(stream: ListingGenerator) -> Generator[Submission, None, None]:
-    fetched_ids: FetchedIds = FetchedIds()
+    saved_ids: SavedIds = SavedIds()
     for question in stream:
         logger_debug = partial(logger.debug, extra={"id": question.id})
         logger.info(f"question: {question.title}")
-        post: dict = validate_post(question, fetched_ids)
+        post: dict = validate_post(question, saved_ids)
         if post["is_unique"]:
-            fetched_ids.update(question.id)
-        while len(fetched_ids) > MAX_FETCHED_IDS:
-            fetched_ids.bisect()
+            saved_ids.update(question.id)
+        while len(saved_ids) > cfg["max_saved_ids"]:
+            saved_ids.bisect()
         if not post["is_unique"] or not post["is_valid"]:
             logger_debug("question: invalid for answering")
             continue
@@ -365,8 +368,8 @@ def main() -> None:
     user = reddit.user.me()
     subreddit = reddit.subreddit("askreddit")
     streams = {
-        "rising": subreddit.rising(limit=RISING_POST_LIM),
-        "new": subreddit.new(limit=NEW_POST_LIM),
+        "rising": subreddit.rising(limit=cfg["rising_post_lim"]),
+        "new": subreddit.new(limit=cfg["new_post_lim"]),
     }
     for sort_type in streams:
         for question in get_questions(streams[sort_type]):

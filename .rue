@@ -2,9 +2,9 @@ dry_run: False
 
 clean_slate: true
 
-max_logs: 9000 # must be > 2
+max_logs: 9000 # must be > 2 or logs will be deleted and added in a infinite loop
 
-max_unique_ids: 500
+max_saved_ids: 500
 
 new_post_lim: 10
 
@@ -22,8 +22,9 @@ maturing_time: 3 # hours
 
 min_self_com_score: 20
 
-score_target: 1000
+acc_score_target: 1000
+
 # must be wrapped in square brackets
-sleep_time: !!python/object/apply:builtins.range [1, 2, 3] # range(1,2,3)
+sleep_time: !!python/object/apply:builtins.range [10, 31, 5] # range(1,2,3)
 
 log_level: "info"

@@ -5,7 +5,7 @@ max_logs:
   type: integer
   min: 3
 
-max_unique_ids:
+max_saved_ids:
   type: integer
   min: 1
 
@@ -41,7 +41,7 @@ min_self_com_score:
   type: integer
   min: 1
 
-score_target:
+acc_score_target:
   type: integer
   min: 1
 

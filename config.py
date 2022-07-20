@@ -5,7 +5,7 @@ import yaml
 from cerberus import TypeDefinition, Validator
 from yaml.constructor import ConstructorError
 
-__all__ = ["config", "secrets"]
+__all__ = ["cfg", "secrets"]
 
 
 def _validate_config(validator: Validator, schema: dict, document: dict) -> None:
@@ -59,4 +59,4 @@ def _get_config() -> tuple[dict]:
     return (config_dict["config"], config_dict["secrets"])
 
 
-config, secrets = _get_config()
+cfg, secrets = _get_config()

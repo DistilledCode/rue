@@ -1,7 +1,8 @@
 import datetime
 import logging
 
-from utils import DB_SOURCE, MAX_LOGS, load_db
+from config import cfg, secrets
+from utils import load_db
 
 __all__ = ["logger"]
 
@@ -9,7 +10,7 @@ __all__ = ["logger"]
 class DBLogHandler(logging.Handler):
     def __init__(self) -> None:
         logging.Handler.__init__(self)
-        with load_db(**DB_SOURCE) as cur:
+        with load_db(**secrets["postgres"]) as cur:
             cur.execute(
                 """CREATE TABLE IF NOT EXISTS 
                         log(
@@ -55,7 +56,7 @@ class DBLogHandler(logging.Handler):
             )
         except Exception:
             self.handleError(record)
-        with load_db(**DB_SOURCE) as cur:
+        with load_db(**secrets["postgres"]) as cur:
             cur.execute(
                 """INSERT INTO log
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s);
@@ -63,16 +64,16 @@ class DBLogHandler(logging.Handler):
                 record_vals,
             )
         self.record_num += 1
-        while self.record_num > MAX_LOGS:
+        while self.record_num > cfg["max_logs"]:
             self._bisect()
 
     def _update_record_num(self):
-        with load_db(**DB_SOURCE) as cur:
+        with load_db(**secrets["postgres"]) as cur:
             cur.execute("SELECT COUNT(*) FROM log;")
             self.record_num = cur.fetchall()[0][0]
 
     def _bisect(self):
-        with load_db(**DB_SOURCE) as cur:
+        with load_db(**secrets["postgres"]) as cur:
             cur.execute(
                 """DELETE FROM log
                     WHERE timestamp IN (

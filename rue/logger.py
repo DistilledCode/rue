@@ -93,15 +93,22 @@ class _DBLogHandler(logging.Handler):
 
 
 def _get_logger():
+    logging_level = {
+        "debug": logging.DEBUG,
+        "info": logging.INFO,
+        "warning": logging.WARNING,
+        "error": logging.ERROR,
+        "critical": logging.CRITICAL,
+    }
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
     frmt = "{asctime} {levelname:^10} {filename}:{lineno}  {message}"
     formatter = logging.Formatter(frmt, style="{")
     db_handler = _DBLogHandler()
     db_handler.setFormatter(formatter)
-    db_handler.setLevel(logging.DEBUG)
+    db_handler.setLevel(logging_level.get(cfg["log_level"]["db"]))
     stream_handler = logging.StreamHandler()
-    stream_handler.setLevel(logging.INFO)
+    stream_handler.setLevel(logging_level.get(cfg["log_level"]["stream"]))
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
     logger.addHandler(db_handler)

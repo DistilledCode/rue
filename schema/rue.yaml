@@ -52,5 +52,11 @@ sleep_time:
   type: range
 
 log_level:
-  type: string
-  allowed: ["debug", "info", "warning", "error", "critical"]
+  type: dict
+  schema:
+    db:
+      type: string
+      allowed: ["debug", "info", "warning", "error", "critical"]
+    stream:
+      type: string
+      allowed: ["debug", "info", "warning", "error", "critical"]

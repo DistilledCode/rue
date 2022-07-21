@@ -1,4 +1,5 @@
 from builtins import range
+from dataclasses import make_dataclass
 from pathlib import Path
 from sys import exit
 
@@ -7,6 +8,18 @@ from cerberus import TypeDefinition, Validator
 from yaml.constructor import ConstructorError
 
 __all__ = ["cfg", "secrets"]
+
+
+def _dict2dataclass(name: str, conv_dict: dict, **kwargs: dict) -> type:
+    if any(not isinstance(x := key, str) or not x.isidentifier() for key in conv_dict):
+        raise TypeError(f"Field names must be valid identifiers: {x!r}")
+    field_list = []
+    for key, val in conv_dict.items():
+        if val.__class__ is dict:
+            val = _dict2dataclass(key, val, **kwargs)
+        field_list.append((key, val.__class__, val))
+    DataClass = make_dataclass(name, field_list, **kwargs)
+    return DataClass()
 
 
 def _validate_config(validator: Validator, schema: dict, document: dict) -> None:
@@ -57,3 +70,5 @@ def _get_config() -> tuple[dict]:
 
 
 cfg, secrets = _get_config()
+cfg = _dict2dataclass("Cfg", cfg)
+secrets = _dict2dataclass("Secrets", secrets)

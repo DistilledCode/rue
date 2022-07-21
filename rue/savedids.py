@@ -1,4 +1,5 @@
 import datetime
+from dataclasses import asdict
 
 from rue.config import secrets
 from rue.logger import logger
@@ -7,7 +8,7 @@ from rue.utils import load_db
 
 class SavedIds:
     def __init__(self):
-        with load_db(**secrets["postgres"]) as cur:
+        with load_db(**asdict(secrets.postgres)) as cur:
             cur.execute(
                 """CREATE TABLE IF NOT EXISTS
                         seen(
@@ -22,14 +23,14 @@ class SavedIds:
 
     @property
     def ids(self):
-        with load_db(**secrets["postgres"]) as cur:
+        with load_db(**asdict(secrets.postgres)) as cur:
             cur.execute("SELECT postid FROM seen;")
             self._ids = set(cur.fetchall())
         return self._ids
 
     def update(self, postid: str):
         curr_time = datetime.datetime.now(tz=datetime.timezone.utc)
-        with load_db(**secrets["postgres"]) as cur:
+        with load_db(**asdict(secrets.postgres)) as cur:
             cur.execute(
                 """INSERT INTO seen
                     VALUES (%s,%s)
@@ -42,7 +43,7 @@ class SavedIds:
             cur.close()
 
     def bisect(self):
-        with load_db(**secrets["postgres"]) as cur:
+        with load_db(**asdict(secrets.postgres)) as cur:
             cur.execute(
                 """DELETE FROM seen
                     WHERE postid IN (

@@ -15,11 +15,11 @@ else:
     logger.debug(f"Loaded spaCy model {_model_name!r}")
 try:
     reddit = Reddit(
-        client_id=secrets["reddit"]["client_id"],
-        client_secret=secrets["reddit"]["client_secret"],
-        password=secrets["reddit"]["password"],
-        user_agent=secrets["reddit"]["user_agent"],
-        username=secrets["reddit"]["username"],
+        client_id=secrets.reddit.client_id,
+        client_secret=secrets.reddit.client_secret,
+        password=secrets.reddit.password,
+        user_agent=secrets.reddit.user_agent,
+        username=secrets.reddit.username,
     )
 except NoSectionError:
     # TODO We are using yaml, this handling is obsolete

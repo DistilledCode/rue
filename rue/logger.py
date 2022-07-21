@@ -1,5 +1,6 @@
 import datetime
 import logging
+from dataclasses import asdict
 
 from rue.config import cfg, secrets
 from rue.utils import load_db
@@ -10,7 +11,7 @@ __all__ = ["logger"]
 class _DBLogHandler(logging.Handler):
     def __init__(self) -> None:
         logging.Handler.__init__(self)
-        with load_db(**secrets["postgres"]) as cur:
+        with load_db(**asdict(secrets.postgres)) as cur:
             cur.execute(
                 """CREATE TABLE IF NOT EXISTS 
                         log(
@@ -56,7 +57,7 @@ class _DBLogHandler(logging.Handler):
             )
         except Exception:
             self.handleError(record)
-        with load_db(**secrets["postgres"]) as cur:
+        with load_db(**asdict(secrets.postgres)) as cur:
             cur.execute(
                 """INSERT INTO log
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s);
@@ -64,16 +65,16 @@ class _DBLogHandler(logging.Handler):
                 record_vals,
             )
         self.record_num += 1
-        while self.record_num > cfg["max_logs"]:
+        while self.record_num > cfg.max_logs:
             self._bisect()
 
     def _update_record_num(self):
-        with load_db(**secrets["postgres"]) as cur:
+        with load_db(**asdict(secrets.postgres)) as cur:
             cur.execute("SELECT COUNT(*) FROM log;")
             self.record_num = cur.fetchall()[0][0]
 
     def _bisect(self):
-        with load_db(**secrets["postgres"]) as cur:
+        with load_db(**asdict(secrets.postgres)) as cur:
             cur.execute(
                 """DELETE FROM log
                     WHERE timestamp IN (
@@ -106,9 +107,9 @@ def _get_logger():
     formatter = logging.Formatter(frmt, style="{")
     db_handler = _DBLogHandler()
     db_handler.setFormatter(formatter)
-    db_handler.setLevel(logging_level.get(cfg["log_level"]["db"]))
+    db_handler.setLevel(logging_level.get(cfg.log_level.db))
     stream_handler = logging.StreamHandler()
-    stream_handler.setLevel(logging_level.get(cfg["log_level"]["stream"]))
+    stream_handler.setLevel(logging_level.get(cfg.log_level.stream))
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
     logger.addHandler(db_handler)

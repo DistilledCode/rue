@@ -30,48 +30,34 @@ def update_preferences(googled: Submission) -> None:
 
 def validate_comment(comment: Comment) -> bool:
     log_debug = partial(logger.debug, extra={"id": comment.id})
-
-    if len(comment.body) > cfg["max_com_char_len"]:
-        log_debug(f'validation: comment characters length > {cfg["max_com_char_len"]}')
+    if len(comment.body) > cfg.max_com_char_len:
+        log_debug(f"validation: comment characters length > {cfg.max_com_char_len}")
         return False
-    else:
-        log_debug(f'validation: comment characters length < {cfg["max_com_char_len"]}')
-
+    log_debug(f"validation: comment characters length < {cfg.max_com_char_len}")
     if not all(i in printable for i in comment.body):
+        log_debug(f"validation: all characters are not printable")
         return False
-
-    if (score := comment.score) < cfg["min_valid_com_score"]:
-        log_debug(
-            f"validation: comment score < {cfg['min_valid_com_score']} (is {score})"
-        )
+    log_debug(f"validation: all characters are printable")
+    if comment.score < cfg.min_valid_com_score:
+        log_debug(f"validation: comment score < {cfg.min_valid_com_score}")
         return False
-    else:
-        log_debug(
-            f"validation: comment score > {cfg['min_valid_com_score']} (is {score})"
-        )
-
+    log_debug(f"validation: comment score > {cfg.min_valid_com_score}")
     if comment.edited is not False:
         log_debug("validation: edited comment")
         return False
-    else:
-        log_debug("validation: unedited comment")
-
+    log_debug("validation: unedited comment")
     if comment.stickied is True:
         log_debug(f"validation: stickied comment")
         return False
-    else:
-        log_debug(f"validation: non-stickied comment")
-
+    log_debug(f"validation: non-stickied comment")
     if comment.author is None:
         log_debug("validation: deleted or removed comment (body unavailable)")
         return False
-    else:
-        log_debug("validation: body available")
+    log_debug("validation: body available")
     if langproc.prp_ratio(comment) > 0.1:
         log_debug(f"validation: comment personal pronoun ratio > 0.1")
         return False
-    else:
-        log_debug(f"validation: comment personal pronoun ratio < 0.1")
+    log_debug(f"validation: comment personal pronoun ratio < 0.1")
     return True
 
 
@@ -89,33 +75,33 @@ def validate_post(post: Submission, saved_ids: SavedIds) -> dict:
         log_debug("validation: duplicate post (saved earlier)")
     else:
         log_debug("validation: unique post")
-    # average token lenght of top 1000 posts is < 14
-    if len(nlp(post.title)) > cfg["max_post_token_len"]:
+    if len(nlp(post.title)) > cfg.max_post_token_len:
         validation["is_valid"] = False
-        log_debug(f"validation: post token length > {cfg['max_post_token_len']}")
+        log_debug(f"validation: post token length > {cfg.max_post_token_len}")
     else:
-        log_debug(f"validation: post token length < {cfg['max_post_token_len']}")
+        log_debug(f"validation: post token length < {cfg.max_post_token_len}")
     return validation
 
 
-def get_answers(question: str) -> list:
-    candidates = google_query(question)
-    answers = []
-    if candidates:
-        for comment in candidates:
-            if validate_comment(comment):
-                logger.debug("comment: valid as answer", extra={"id": comment.id})
-                answers.append(comment)
-            else:
-                logger.debug("comment: invalid as answer", extra={"id": comment.id})
-        answers.sort(key=lambda x: x.score, reverse=True)
+def get_answers(question: str) -> list[Comment]:
+    ans_candidates = google_query(question)
+    answers: list[Comment] = []
+    if not ans_candidates:
+        return answers
+    for comment in ans_candidates:
+        if validate_comment(comment):
+            logger.debug("comment: valid as answer", extra={"id": comment.id})
+            answers.append(comment)
+        else:
+            logger.debug("comment: invalid as answer", extra={"id": comment.id})
+    answers.sort(key=lambda x: x.score, reverse=True)
     return answers
 
 
 def google_query(question: str) -> list[Comment]:
     query = f"site:www.reddit.com/r/askreddit {question}"
     pattern = r"comments\/([a-z0-9]{1,})\/"
-    candidates: list[Comment] = []
+    ans_candidates: list[Comment] = []
     try:
         for searched in search(query=query, num=3, stop=3, country="US"):
             if (match := re.search(pattern, searched)) is not None:
@@ -129,15 +115,13 @@ def google_query(question: str) -> list[Comment]:
                 logger.debug("googled: post younger than 14 days")
                 continue
             similarity = langproc.calculate_similarity(question, googled.title)
-            logger.debug(
-                f"googled: post score={googled.score}", extra={"id": googled.id}
-            )
-            if similarity > 0.95 and googled.score > cfg["min_valid_post_score"]:
+            logger.debug(f"googled: score={googled.score}", extra={"id": googled.id})
+            if similarity > 0.95 and googled.score > cfg.min_valid_post_score:
                 logger.debug(
                     "googled: post eligible for parsing comments",
                     extra={"id": googled.id},
                 )
-                candidates.extend(comment for comment in googled.comments)
+                ans_candidates.extend(comment for comment in googled.comments)
             else:
                 logger.debug(
                     "googled: post ineligible for parsing comments",
@@ -148,14 +132,15 @@ def google_query(question: str) -> list[Comment]:
             logger.exception(f"googled: {exception.msg}", stack_info=True)
             logger.info("googled: sleeping for 10 minutes & then retrying")
             sleepfor(total_time=600)
-            google_query(question)
-    return candidates
+            # we might end up in an infinite loop
+            return google_query(question)
+    return ans_candidates
 
 
 def cleanup(user: Redditor) -> bool:
-    if (tot_karma := user.comment_karma + user.link_karma) <= cfg["acc_score_target"]:
+    if (tot_karma := user.comment_karma + user.link_karma) <= cfg.acc_score_target:
         return False
-    if not cfg["clean_slate"]:
+    if not cfg.clean_slate:
         logger.info(f"user: target reached. exiting. {tot_karma = }")
         return True
 
@@ -208,9 +193,12 @@ def check_shadowban(user: Redditor) -> Optional[bool]:
     praw_comments = {comment.id for comment in user.comments.new(limit=limit)}
     if diff := praw_comments.difference(req_comments):
         if diff == praw_comments:
-            logger.critical(f"all latest {limit} comments are shadowbanned")
-        for id in diff:
-            logger.error(f"comment is shadowbanned", extra={"id": id})
+            logger.critical(f"all {limit} comments are shadowbanned: {','.join(diff)}")
+        elif len(diff) > 10:
+            logger.warn(f"More than 10 comment are shadowbanned: {','.join(diff)}")
+        else:
+            for id in diff:
+                logger.warn(f"comment is shadowbanned", extra={"id": id})
         return True
     else:
         return False
@@ -218,9 +206,9 @@ def check_shadowban(user: Redditor) -> Optional[bool]:
 
 def del_poor_performers() -> None:
     all_comments = reddit.user.me().comments.new(limit=None)
-    target_comments = (i for i in all_comments if i.score < cfg["min_self_com_score"])
+    target_comments = (i for i in all_comments if i.score < cfg.min_self_com_score)
     for comment in target_comments:
-        if age(comment, unit="hour") > cfg["maturing_time"]:
+        if age(comment, unit="hour") > cfg.maturing_time:
             reddit.comment(comment.id).delete()
             logger.debug(
                 f"deleted poor performing comment. ({comment.score})",
@@ -234,20 +222,21 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
         return
     answer = answers[0]
     answer.body = langproc.paraphrase(answer.body)
-    run = "DRY_RUN" if cfg["dry_run"] else "LIVE_RUN"
-    if cfg["dry_run"]:
+    run = "DRY_RUN" if cfg.dry_run else "LIVE_RUN"
+    if cfg.dry_run:
         logger.info(
             f"answer:{run =} [{answer.score}] {answer.body[:100]}...",
             extra={"id": "dummy_id"},
         )
         return
     try:
+        user = reddit.user.me()
         answer_id = question.reply(body=answer.body)
         logger.info(
             f"answer:{run =} [{answer.score}] {answer.body[:100]}...",
             extra={"id": answer_id},
         )
-        sleep_time = random.choice(cfg["sleep_time"]) * 60
+        sleep_time = random.choice(cfg.sleep_time) * 60
         logger.info(f"answer: commented successfully. sleeping for {sleep_time}s")
         sleepfor(total_time=sleep_time)
     except prawcore.exceptions.Forbidden:
@@ -255,13 +244,13 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
             "answer: action forbidden. Checking account ban.",
             exc_info=True,
         )
-        if check_ban(user := reddit.user.me()):
-            log_str = f"{str(user)!r} is banned. Exiting the program."
+        if check_ban(user=user):
+            log_str = f"{user!r} is banned. Exiting the program."
             logger.critical(log_str, exc_info=True)
             sys.exit(log_str)
         else:
-            logger.critical(f"{str(user)} is not banned.")
-            sleep_time = random.choice(cfg["sleep_time"]) * 60
+            logger.critical(f"{user!r} is not banned.")
+            sleep_time = random.choice(cfg.sleep_time) * 60
             logger.info(f"asnwer: sleeping for {sleep_time} secs & retrying.")
             post_answer(question=question, answers=answers)
     except RedditAPIException as exceptions:
@@ -273,8 +262,7 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
             post_answer(question=question, answers=answers)
         for exception in exceptions.items:
             if exception.error_type == "BANNED_FROM_SUBREDDIT":
-                usrname = str(reddit.user.me())
-                log_str = f"answer: {usrname!r} banned from r/askreddit."
+                log_str = f"answer: {user!r} banned from r/{question.subreddit}"
                 logger.critical(log_str, exc_info=True)
                 sys.exit(log_str)
 
@@ -287,14 +275,13 @@ def get_questions(stream: ListingGenerator) -> Generator[Submission, None, None]
         post: dict = validate_post(question, saved_ids)
         if post["is_unique"]:
             saved_ids.update(question.id)
-        while len(saved_ids) > cfg["max_saved_ids"]:
+        while len(saved_ids) > cfg.max_saved_ids:
             saved_ids.bisect()
         if not post["is_unique"] or not post["is_valid"]:
             logger_debug("question: invalid for answering")
             continue
         else:
             logger_debug("question: valid for answering")
-
         yield question
 
 
@@ -302,8 +289,8 @@ def main() -> None:
     user = reddit.user.me()
     subreddit = reddit.subreddit("askreddit")
     streams = {
-        "rising": subreddit.rising(limit=cfg["rising_post_lim"]),
-        "new": subreddit.new(limit=cfg["new_post_lim"]),
+        "rising": subreddit.rising(limit=cfg.rising_post_lim),
+        "new": subreddit.new(limit=cfg.new_post_lim),
     }
     for sort_type in streams:
         for question in get_questions(streams[sort_type]):

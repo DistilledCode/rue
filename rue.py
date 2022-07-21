@@ -7,13 +7,13 @@ from typing import Generator, Optional
 from urllib.error import HTTPError
 
 import prawcore.exceptions
-import requests
 from googlesearch import search
 from praw.exceptions import RedditAPIException
 from praw.models.listing.generator import ListingGenerator
 from praw.models.reddit.comment import Comment
 from praw.models.reddit.redditor import Redditor
 from praw.models.reddit.submission import Submission
+from requests import get
 
 from rue import langproc, nlp, reddit
 from rue.config import cfg
@@ -188,13 +188,20 @@ def check_shadowban(user: Redditor) -> Optional[bool]:
         log_str = f"{str(user)!r} is banned. Exiting the program."
         logger.critical(log_str)
         sys.exit(log_str)
-    response = requests.get(f"https://www.reddit.com/user/{str(user)}.json")
-    if response.status_code != 200:
-        logger.warning(f"{response.status_code = }. skipping shadowban check")
+    for i in range(1, retries := 31):
+        resp = get(f"https://www.reddit.com/user/{str(user)}.json")
+        if resp.status_code != 200:
+            if i % 5 == 0:  # logging every 5th failed attempt
+                logger.debug(f"[{i}/{retries}] {resp.status_code=} {resp.reason=}")
+        else:
+            logger.info(f"[{i}/{retries}] {resp.status_code=} {resp.reason=}")
+            break
+    else:
+        logger.warn("Retries exhuasted. Skipping shadowban check.")
         return None
     req_comments = {
         child["data"]["id"]
-        for child in response.json()["data"]["children"]
+        for child in resp.json()["data"]["children"]
         if child["kind"] == "t1"
     }
     limit = min(len(req_comments), 100)

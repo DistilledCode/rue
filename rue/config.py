@@ -1,4 +1,5 @@
 from builtins import range
+from pathlib import Path
 from sys import exit
 
 import yaml
@@ -39,23 +40,19 @@ def _read_files(file_dict: dict) -> dict:
 
 
 def _get_config() -> tuple[dict]:
-
+    dir = Path(__file__).resolve().parents[1]
     file_dict = {
-        "config": ".rue",
-        "config_schema": "./schema/rue.yaml",
-        "secrets": ".secrets",
-        "secrets_schema": "./schema/secrets.yaml",
+        "config": dir.joinpath(".rue"),
+        "config_schema": dir.joinpath("schema/rue.yaml"),
+        "secrets": dir.joinpath(".secrets"),
+        "secrets_schema": dir.joinpath("schema/secrets.yaml"),
     }
-
     config_dict = _read_files(file_dict)
-
     Validator.types_mapping["range"] = TypeDefinition("range", (range,), ())
     validator = Validator()
     validator.require_all = True
-
     _validate_config(validator, config_dict["config_schema"], config_dict["config"])
     _validate_config(validator, config_dict["secrets_schema"], config_dict["secrets"])
-
     return (config_dict["config"], config_dict["secrets"])
 
 

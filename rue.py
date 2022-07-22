@@ -1,7 +1,7 @@
 import random
 import re
 import sys
-from functools import partial
+from functools import lru_cache, partial
 from string import printable
 from typing import Generator, Optional
 from urllib.error import HTTPError
@@ -100,6 +100,8 @@ def get_answers(question: str) -> list[Comment]:
     return answers
 
 
+# TODO Use google_query.cache_info() to get stats
+@lru_cache(maxsize=200)
 def google_query(question: str) -> list[Comment]:
     query = f"site:www.reddit.com/r/askreddit {question}"
     pattern = r"comments\/([a-z0-9]{1,})\/"

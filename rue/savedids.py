@@ -29,6 +29,8 @@ class SavedIds:
         return self._ids
 
     def update(self, postid: str):
+        if (postid,) in self.ids:
+            return
         curr_time = datetime.datetime.now(tz=datetime.timezone.utc)
         with load_db(**asdict(secrets.postgres)) as cur:
             cur.execute(
@@ -61,3 +63,6 @@ class SavedIds:
 
     def __len__(self):
         return len(self.ids)
+
+
+saved_ids = SavedIds()

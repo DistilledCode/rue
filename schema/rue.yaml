@@ -9,14 +9,6 @@ max_saved_ids:
   type: integer
   min: 1
 
-new_post_lim:
-  type: integer
-  min: 1
-
-rising_post_lim:
-  type: integer
-  min: 1
-
 min_valid_com_score:
   type: integer
   min: 1

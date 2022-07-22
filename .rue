@@ -6,10 +6,6 @@ max_logs: 9000 # must be > 2 or logs will be deleted and added in a infinite loo
 
 max_saved_ids: 500
 
-new_post_lim: 10
-
-rising_post_lim: 10
-
 min_valid_com_score: 50
 
 min_valid_post_score: 500

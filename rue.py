@@ -18,7 +18,7 @@ from requests import get
 from rue import langproc, nlp, reddit
 from rue.config import cfg
 from rue.logger import logger
-from rue.savedids import SavedIds
+from rue.savedids import saved_ids
 from rue.utils import age, sleepfor
 
 
@@ -61,26 +61,28 @@ def validate_comment(comment: Comment) -> bool:
     return True
 
 
-def validate_post(post: Submission, saved_ids: SavedIds) -> dict:
+def validate_post(post: Submission) -> dict:
     log_debug = partial(logger.debug, extra={"id": post.id})
-    validation = {"is_unique": True, "is_valid": True}
     if post.author is None:
-        validation["is_valid"] = False
-        log_debug("validation: deleted or removed post (attrs unavaialble)")
-    else:
-        log_debug("validation: post attributes avaialble")
+        log_debug("validation (core): deleted or removed post (attributes unavaialble)")
+        return False
+    log_debug("validation (core): post attributes avaialble")
+
+    if post.selftext:
+        log_debug("validation (core): post contain self text")
+        return False
+    log_debug("validation (core): post doesnot contain self text")
 
     if (post.id,) in saved_ids.ids:
-        validation["is_unique"] = False
-        log_debug("validation: duplicate post (saved earlier)")
-    else:
-        log_debug("validation: unique post")
+        log_debug("validation (core): duplicate post (saved earlier)")
+        return False
+    log_debug("validation (core): unique post")
+
     if len(nlp(post.title)) > cfg.max_post_token_len:
-        validation["is_valid"] = False
-        log_debug(f"validation: post token length > {cfg.max_post_token_len}")
-    else:
-        log_debug(f"validation: post token length < {cfg.max_post_token_len}")
-    return validation
+        log_debug(f"validation (core): post token length > {cfg.max_post_token_len}")
+        return False
+    log_debug(f"validation (core): post token length < {cfg.max_post_token_len}")
+    return True
 
 
 def get_answers(question: str) -> list[Comment]:
@@ -217,8 +219,12 @@ def del_poor_performers() -> None:
 
 
 def post_answer(question: Submission, answers: list[Comment]) -> None:
+    saved_ids.update(question.id)
     if not answers:
-        logger.info("answer: no valid comments found to post as answer")
+        logger.info(
+            "answer: no valid comments found to post as answer",
+            extra={"id": question.id},
+        )
         return
     answer = answers[0]
     answer.body = langproc.paraphrase(answer.body)
@@ -267,21 +273,35 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
                 sys.exit(log_str)
 
 
+def validate_post_metrics(post: Submission) -> bool:
+    log_debug = partial(logger.debug, extra={"id": post.id})
+    if (post_age := age(post, unit="minute")) < 5:
+        log_debug("validation (metrics): post too new to evaluate")
+        return False
+    log_debug("validation (metrics): post has sufficient age for further evaluation")
+
+    if post.num_comments / post_age < 0.5:
+        log_debug("validation (metrics): insufficient comments frequency")
+        return False
+    log_debug("validation (metrics): sufficient comments frequency")
+    return True
+
+
 def get_questions(stream: ListingGenerator) -> Generator[Submission, None, None]:
-    saved_ids: SavedIds = SavedIds()
     for question in stream:
         logger_debug = partial(logger.debug, extra={"id": question.id})
         logger.info(f"question: {question.title}")
-        post: dict = validate_post(question, saved_ids)
-        if post["is_unique"]:
-            saved_ids.update(question.id)
         while len(saved_ids) > cfg.max_saved_ids:
             saved_ids.bisect()
-        if not post["is_unique"] or not post["is_valid"]:
-            logger_debug("question: invalid for answering")
+        if not validate_post(question):
+            logger_debug("validation (core): invalid. will be never answered")
+            saved_ids.update(question.id)
             continue
-        else:
-            logger_debug("question: valid for answering")
+        logger_debug("validation (core): valid. checking for metrics")
+        if not validate_post_metrics(question):
+            logger_debug("validation (metrics): falied. will be evaluated later")
+            continue
+        logger_debug("validation (metrics): passed")
         yield question
 
 
@@ -289,8 +309,8 @@ def main() -> None:
     user = reddit.user.me()
     subreddit = reddit.subreddit("askreddit")
     streams = {
-        "rising": subreddit.rising(limit=cfg.rising_post_lim),
-        "new": subreddit.new(limit=cfg.new_post_lim),
+        "rising": subreddit.rising(limit=None),
+        "new": subreddit.new(limit=None),
     }
     for sort_type in streams:
         for question in get_questions(streams[sort_type]):

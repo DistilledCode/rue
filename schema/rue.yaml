@@ -17,8 +17,16 @@ min_valid_post_score:
   type: integer
   min: 1
 
+post_num_limit:
+  type: integer
+  min: 1
+
 max_post_token_len:
   type: integer
+  min: 1
+
+max_post_age:
+  type: int
   min: 1
 
 max_com_char_len:

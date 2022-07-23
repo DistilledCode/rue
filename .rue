@@ -1,27 +1,31 @@
-dry_run: False
+dry_run: false
 
 clean_slate: true
 
-max_logs: 9000 # must be > 2 or logs will be deleted and added in a infinite loop
+max_logs: 9000000000 # must be > 2 or logs will be deleted and added in a infinite loop
 
-max_saved_ids: 500
+max_saved_ids: 2000
+
+post_num_limit: 20
 
 min_valid_com_score: 50
 
-min_valid_post_score: 500
+min_valid_post_score: 100
 
-max_post_token_len: 20
+max_post_token_len: 15
 
-max_com_char_len: 1000
+max_post_age: 2 # hours
 
-maturing_time: 3 # hours
+max_com_char_len: 500
 
-min_self_com_score: 20
+maturing_time: 10 # hours
 
-acc_score_target: 1000
+min_self_com_score: 10
+
+acc_score_target: 10000
 
 # must be wrapped in square brackets
-sleep_time: !!python/object/apply:builtins.range [10, 31, 5] # range(1,2,3)
+sleep_time: !!python/object/apply:builtins.range [10, 21, 1] # range(1,2,3)
 
 log_level:
   stream: "info"

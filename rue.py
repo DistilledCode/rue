@@ -66,8 +66,10 @@ def validate_post(post: Submission) -> dict:
     if post.author is None:
         log_debug("validation (core): deleted or removed post (attributes unavaialble)")
         return False
-    log_debug("validation (core): post attributes avaialble")
-
+    if (post_age := age(post, unit="hour")) > cfg.max_post_age:
+        post.too_old = True
+        log_debug(f"validation (core): post is too old ({post_age} hours)")
+        return False
     if post.selftext:
         log_debug("validation (core): post contain self text")
         return False

@@ -1,7 +1,7 @@
 import random
 import re
 import sys
-from functools import lru_cache, partial
+from functools import partial
 from string import printable
 from typing import Generator, Optional
 from urllib.error import HTTPError
@@ -33,68 +33,60 @@ def validate_comment(comment: Comment) -> bool:
     if len(comment.body) > cfg.max_com_char_len:
         log_debug(f"validation: comment characters length > {cfg.max_com_char_len}")
         return False
-    log_debug(f"validation: comment characters length < {cfg.max_com_char_len}")
     if not all(i in printable for i in comment.body):
         log_debug(f"validation: all characters are not printable")
         return False
-    log_debug(f"validation: all characters are printable")
     if comment.score < cfg.min_valid_com_score:
         log_debug(f"validation: comment score < {cfg.min_valid_com_score}")
         return False
-    log_debug(f"validation: comment score > {cfg.min_valid_com_score}")
     if comment.edited is not False:
         log_debug("validation: edited comment")
         return False
-    log_debug("validation: unedited comment")
     if comment.stickied is True:
         log_debug(f"validation: stickied comment")
         return False
-    log_debug(f"validation: non-stickied comment")
     if comment.author is None:
         log_debug("validation: deleted or removed comment (body unavailable)")
         return False
-    log_debug("validation: body available")
     if langproc.prp_ratio(comment) > 0.1:
         log_debug(f"validation: comment personal pronoun ratio > 0.1")
         return False
-    log_debug(f"validation: comment personal pronoun ratio < 0.1")
     return True
 
 
-def validate_post(post: Submission) -> dict:
-    log_debug = partial(logger.debug, extra={"id": post.id})
+def validate_post(post: Submission) -> bool:
+    post.too_old = False
+    log_info = partial(logger.info, extra={"id": post.id})
     if post.author is None:
-        log_debug("validation (core): deleted or removed post (attributes unavaialble)")
+        log_info("validation (core): deleted or removed post (attributes unavaialble)")
         return False
     if (post_age := age(post, unit="hour")) > cfg.max_post_age:
         post.too_old = True
-        log_debug(f"validation (core): post is too old ({post_age} hours)")
+        log_info(f"validation (core): post is too old ({post_age} hours)")
+        return False
+    if post.num_comments > 500:
+        log_info("validatio (core): too many comments, hard to get attention")
         return False
     if post.selftext:
-        log_debug("validation (core): post contain self text")
+        log_info("validation (core): post contain self text")
         return False
-    log_debug("validation (core): post doesnot contain self text")
-
     if (post.id,) in saved_ids.ids:
-        log_debug("validation (core): duplicate post (saved earlier)")
+        log_info("validation (core): duplicate post (saved earlier)")
         return False
-    log_debug("validation (core): unique post")
-
     if len(nlp(post.title)) > cfg.max_post_token_len:
-        log_debug(f"validation (core): post token length > {cfg.max_post_token_len}")
+        log_info(f"validation (core): post token length > {cfg.max_post_token_len}")
         return False
-    log_debug(f"validation (core): post token length < {cfg.max_post_token_len}")
     return True
 
 
-def get_answers(question: str) -> list[Comment]:
+def get_answers(question: Submission) -> list[Comment]:
     ans_candidates = google_query(question)
     answers: list[Comment] = []
     if not ans_candidates:
         return answers
     for comment in ans_candidates:
         if validate_comment(comment):
-            logger.debug("comment: valid as answer", extra={"id": comment.id})
+            logger.info("comment: valid as answer", extra={"id": comment.id})
             answers.append(comment)
         else:
             logger.debug("comment: invalid as answer", extra={"id": comment.id})
@@ -102,14 +94,12 @@ def get_answers(question: str) -> list[Comment]:
     return answers
 
 
-# TODO Use google_query.cache_info() to get stats
-@lru_cache(maxsize=200)
-def google_query(question: str) -> list[Comment]:
-    query = f"site:www.reddit.com/r/askreddit {question}"
+def google_query(question: Submission) -> list[Comment]:
+    query = f"site:www.reddit.com/r/{question.subreddit} {question.title}"
     pattern = r"comments\/([a-z0-9]{1,})\/"
     ans_candidates: list[Comment] = []
     try:
-        for searched in search(query=query, num=3, stop=3, country="US"):
+        for searched in search(query=query, num=5, stop=5, country="US"):
             if (match := re.search(pattern, searched)) is not None:
                 googled = reddit.submission(match.group(1))
             else:
@@ -120,16 +110,16 @@ def google_query(question: str) -> list[Comment]:
             if age(googled, unit="day") < 14:
                 logger.debug("googled: post younger than 14 days")
                 continue
-            similarity = langproc.calculate_similarity(question, googled.title)
-            logger.debug(f"googled: score={googled.score}", extra={"id": googled.id})
+            similarity = langproc.calculate_similarity(question.title, googled.title)
+            logger.debug(f"googled: score = {googled.score}", extra={"id": googled.id})
             if similarity > 0.95 and googled.score > cfg.min_valid_post_score:
-                logger.debug(
+                logger.info(
                     "googled: post eligible for parsing comments",
                     extra={"id": googled.id},
                 )
                 ans_candidates.extend(comment for comment in googled.comments)
             else:
-                logger.debug(
+                logger.info(
                     "googled: post ineligible for parsing comments",
                     extra={"id": googled.id},
                 )
@@ -255,20 +245,23 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
         )
         return
     answer = answers[0]
+    # TODO might wanna restrict the length of answer being logged
+    logger.debug(f"answer: [original] {answer.body}")
     answer.body = langproc.paraphrase(answer.body)
+    logger.debug(f"answer: [paraphrased] {answer.body}")
     run = "DRY_RUN" if cfg.dry_run else "LIVE_RUN"
     if cfg.dry_run:
         logger.info(
-            f"answer:{run =} [{answer.score}] {answer.body[:100]}...",
+            f"answer:[{run}] [{answer.score}] {answer.body[:100]}...",
             extra={"id": "dummy_id"},
         )
         return
     try:
         user = reddit.user.me()
-        answer_id = question.reply(body=answer.body)
+        answered = question.reply(body=answer.body)
         logger.info(
-            f"answer:{run =} [{answer.score}] {answer.body[:100]}...",
-            extra={"id": answer_id},
+            f"answer:[{run}] [{answer.score}] ({answer.id}) {answer.body[:100]}...",
+            extra={"id": answered.id},
         )
         sleep_time = random.choice(cfg.sleep_time) * 60
         logger.info(f"answer: commented successfully. sleeping for {sleep_time}s")
@@ -302,50 +295,58 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
 
 
 def validate_post_metrics(post: Submission) -> bool:
-    log_debug = partial(logger.debug, extra={"id": post.id})
-    if (post_age := age(post, unit="minute")) < 5:
-        log_debug("validation (metrics): post too new to evaluate")
+    log_info = partial(logger.info, extra={"id": post.id})
+    if (post_age := age(post, unit="minute")) < 3:
+        log_info("validation (metrics): post too new to evaluate")
         return False
-    log_debug("validation (metrics): post has sufficient age for further evaluation")
-
     if post.num_comments / post_age < 0.5:
-        log_debug("validation (metrics): insufficient comments frequency")
+        log_info("validation (metrics): insufficient comments frequency")
         return False
-    log_debug("validation (metrics): sufficient comments frequency")
     return True
 
 
 def get_questions(stream: ListingGenerator) -> Generator[Submission, None, None]:
+    validated_posts = 0
+    _, sub, sort_by = stream.url.split("/")
     for question in stream:
-        logger_debug = partial(logger.debug, extra={"id": question.id})
-        logger.info(f"question: {question.title}")
+        logger_info = partial(logger.info, extra={"id": question.id})
+        logger_info(f"question #{stream.yielded}: {sub}[{sort_by}]: {question.title}")
         while len(saved_ids) > cfg.max_saved_ids:
             saved_ids.bisect()
         if not validate_post(question):
-            logger_debug("validation (core): invalid. will be never answered")
+            logger_info("validation (core): invalid. will be never answered")
             saved_ids.update(question.id)
+            # if we sort by 'new' and encountered first post which is `too old`,
+            # rest of the upcoming posts will also be `too old`
+            if sort_by == "new" and question.too_old == True:
+                logger_info(f"{sort_by=} post is 'too old'. Iteration will be futile")
+                return
             continue
-        logger_debug("validation (core): valid. checking for metrics")
+        logger_info("validation (core): valid. checking for metrics")
         if not validate_post_metrics(question):
-            logger_debug("validation (metrics): falied. will be evaluated later")
+            logger_info("validation (metrics): falied. will be evaluated later")
             continue
-        logger_debug("validation (metrics): passed")
+        logger_info("validation (metrics): passed")
+        validated_posts += 1
         yield question
+        if validated_posts > cfg.post_num_limit:
+            return
 
 
-def main() -> None:
-    pre_execution()
-    subreddit = reddit.subreddit("askreddit")
-    streams = {
-        "rising": subreddit.rising(limit=None),
-        "new": subreddit.new(limit=None),
-    }
-    for sort_type in streams:
-        for question in get_questions(streams[sort_type]):
-            answers: list[Comment] = get_answers(question.title)
-            post_answer(question, answers)
-        post_execution()
+def main(subs: list[str]) -> None:
+    for sub in subs:
+        subreddit = reddit.subreddit(sub)
+        # TODO directly call ListingGenerator to generate stream
+        streams = (subreddit.new(limit=200), subreddit.rising(limit=200))
+        for stream in streams:
+            for question in get_questions(stream):
+                answers: list[Comment] = get_answers(question)
+                post_answer(question, answers)
 
 
 if __name__ == "__main__":
-    main()
+    subs = ["AskReddit", "AskMen", "NoStupidQuestions", "TooAfraidToAsk"]
+    pre_execution()
+    while True:
+        main(subs)
+        post_execution()

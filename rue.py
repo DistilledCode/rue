@@ -143,11 +143,33 @@ def google_query(question: str) -> list[Comment]:
     return ans_candidates
 
 
+def post_execution():
+    user = reddit.user.me()
+    del_poor_performers(user=user)
+    check_shadowban(user=user)
+    if cleanup(user=user):
+        sys.exit()
+
+
+def pre_execution():
+    post_execution()
+    user = reddit.user.me()
+    comments = user.comments.new()
+    try:
+        latest = next(comments)
+    except StopIteration:
+        pass
+    else:
+        if age(latest, unit="minute") < (sl_time := min(cfg.sleep_time)):
+            logger.info(f"Latest comment is too young. Sleeping for {sl_time} minutes")
+            sleepfor(sl_time * 60)
+
+
 def cleanup(user: Redditor) -> bool:
     if (tot_karma := user.comment_karma + user.link_karma) <= cfg.acc_score_target:
         return False
     if not cfg.clean_slate:
-        logger.info(f"user: target reached. exiting. {tot_karma = }")
+        logger.info(f"user: target reached. exiting. {tot_karma=}")
         return True
 
     logger.info(f"user: target reached. removing content. {tot_karma=}")
@@ -166,6 +188,7 @@ def cleanup(user: Redditor) -> bool:
         else:
             cleanup_comments()
 
+    cleanup_comments()
     logger.info("user: all content removed. exiting the program")
     return True
 
@@ -176,23 +199,23 @@ def check_ban(user: Redditor) -> bool:
 
 def check_shadowban(user: Redditor) -> Optional[bool]:
     if check_ban(user):
-        log_str = f"{str(user)!r} is banned. Exiting the program."
+        log_str = f"{str(user)!r} is banned. Exiting the program"
         logger.critical(log_str)
         sys.exit(log_str)
-    for i in range(1, retries := 31):
-        resp = get(f"https://www.reddit.com/user/{str(user)}.json")
-        if resp.status_code != 200:
+    for i in range(r := 30):
+        rsp = get(f"https://www.reddit.com/user/{str(user)}.json")
+        if rsp.status_code != 200:
             if i % 5 == 0:  # logging every 5th failed attempt
-                logger.debug(f"[{i}/{retries}] {resp.status_code=} {resp.reason=}")
+                logger.debug(f"json: [{i}/{r} retries] {rsp.status_code} {rsp.reason}")
         else:
-            logger.info(f"[{i}/{retries}] {resp.status_code=} {resp.reason=}")
+            logger.info(f"json: [{i}/{r} retries] {rsp.status_code} {rsp.reason}")
             break
     else:
-        logger.warn("Retries exhuasted. Skipping shadowban check.")
+        logger.warn("Retries exhuasted. Skipping shadowban check")
         return None
     req_comments = {
         child["data"]["id"]
-        for child in resp.json()["data"]["children"]
+        for child in rsp.json()["data"]["children"]
         if child["kind"] == "t1"
     }
     limit = min(len(req_comments), 100)
@@ -203,18 +226,19 @@ def check_shadowban(user: Redditor) -> Optional[bool]:
         elif len(diff) > 10:
             logger.warn(f"More than 10 comment are shadowbanned: {','.join(diff)}")
         else:
-            for id in diff:
-                logger.warn(f"comment is shadowbanned", extra={"id": id})
+            for banned_id in diff:
+                logger.warn(f"comment is shadowbanned", extra={"id": banned_id})
         return True
     else:
+        logger.info(f"none of {len(praw_comments)} comments were shadowbanned")
         return False
 
 
-def del_poor_performers() -> None:
-    all_comments = reddit.user.me().comments.new(limit=None)
+def del_poor_performers(user: Redditor) -> None:
+    all_comments = user.comments.new(limit=None)
     target_comments = (i for i in all_comments if i.score < cfg.min_self_com_score)
     for comment in target_comments:
-        if age(comment, unit="hour") > cfg.maturing_time:
+        if age(comment, unit="hour") > cfg.maturing_time or comment.score < 1:
             reddit.comment(comment.id).delete()
             logger.debug(
                 f"deleted poor performing comment. ({comment.score})",
@@ -310,7 +334,7 @@ def get_questions(stream: ListingGenerator) -> Generator[Submission, None, None]
 
 
 def main() -> None:
-    user = reddit.user.me()
+    pre_execution()
     subreddit = reddit.subreddit("askreddit")
     streams = {
         "rising": subreddit.rising(limit=None),
@@ -320,10 +344,7 @@ def main() -> None:
         for question in get_questions(streams[sort_type]):
             answers: list[Comment] = get_answers(question.title)
             post_answer(question, answers)
-    del_poor_performers()
-    check_shadowban(user=user)
-    if cleanup(user=user):
-        sys.exit()
+        post_execution()
 
 
 if __name__ == "__main__":

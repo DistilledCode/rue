@@ -7,8 +7,6 @@ from rue.utils import sanitize
 
 
 def _spinbot(sentence: str, ignore: str) -> str:
-    # character limit of 10000
-    assert len(sentence) < 10000
     url = "https://spinbot-back.azurewebsites.net/spin/rewrite-text"
     if ignore:
         json = {"text": sentence, "x_spin_cap_words": True, "x_words_to_skip": ignore}

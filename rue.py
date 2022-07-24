@@ -62,9 +62,9 @@ def validate_post(post: Submission) -> bool:
         return False
     if (post_age := age(post, unit="hour")) > cfg.max_post_age:
         post.too_old = True
-        log_info(f"validation (core): post is too old ({post_age} hours)")
+        log_info(f"validation (core): post is too old ({round(post_age,3)} hours)")
         return False
-    if post.num_comments > 500:
+    if post.num_comments > 200:
         log_info("validatio (core): too many comments, hard to get attention")
         return False
     if post.selftext:
@@ -94,7 +94,7 @@ def get_answers(question: Submission) -> list[Comment]:
     return answers
 
 
-def google_query(question: Submission) -> list[Comment]:
+def google_query(question: Submission, sleep_time: int = 20) -> list[Comment]:
     query = f"site:www.reddit.com/r/{question.subreddit} {question.title}"
     pattern = r"comments\/([a-z0-9]{1,})\/"
     ans_candidates: list[Comment] = []
@@ -111,7 +111,7 @@ def google_query(question: Submission) -> list[Comment]:
                 logger.debug("googled: post younger than 14 days")
                 continue
             similarity = langproc.calculate_similarity(question.title, googled.title)
-            logger.debug(f"googled: score = {googled.score}", extra={"id": googled.id})
+            logger.debug(f"googled: score={googled.score}", extra={"id": googled.id})
             if similarity > 0.95 and googled.score > cfg.min_valid_post_score:
                 logger.info(
                     "googled: post eligible for parsing comments",
@@ -126,10 +126,10 @@ def google_query(question: Submission) -> list[Comment]:
     except HTTPError as exception:
         if exception.code == 429:
             logger.exception(f"googled: {exception.msg}", stack_info=True)
-            logger.info("googled: sleeping for 10 minutes & then retrying")
-            sleepfor(total_time=600)
+            logger.info(f"googled: rertying after {sleep_time} minutes")
+            sleepfor(sleep_time * 60)
             # we might end up in an infinite loop
-            return google_query(question)
+            return google_query(question, sleep_time + 5)
     return ans_candidates
 
 
@@ -193,6 +193,7 @@ def check_shadowban(user: Redditor) -> Optional[bool]:
         logger.critical(log_str)
         sys.exit(log_str)
     for i in range(r := 30):
+        # we get only 25 most recent comments, might use pushshift.io in future
         rsp = get(f"https://www.reddit.com/user/{str(user)}.json")
         if rsp.status_code != 200:
             if i % 5 == 0:  # logging every 5th failed attempt
@@ -201,7 +202,7 @@ def check_shadowban(user: Redditor) -> Optional[bool]:
             logger.info(f"json: [{i}/{r} retries] {rsp.status_code} {rsp.reason}")
             break
     else:
-        logger.warn("Retries exhuasted. Skipping shadowban check")
+        logger.warning("Retries exhuasted. Skipping shadowban check")
         return None
     req_comments = {
         child["data"]["id"]
@@ -228,22 +229,19 @@ def del_poor_performers(user: Redditor) -> None:
     all_comments = user.comments.new(limit=None)
     target_comments = (i for i in all_comments if i.score < cfg.min_self_com_score)
     for comment in target_comments:
-        if age(comment, unit="hour") > cfg.maturing_time or comment.score < 1:
+        if (cma := age(comment, unit="hour")) > cfg.maturing_time or comment.score < 1:
             reddit.comment(comment.id).delete()
             logger.debug(
-                f"deleted poor performing comment. ({comment.score})",
+                f"deleted poor performing comment. ({comment.score}) ({cma} hrs old)",
                 extra={"id": comment.id},
             )
 
 
-def post_answer(question: Submission, answers: list[Comment]) -> None:
+def post_answer(question: Submission, answers: list[Comment]) -> bool:
     saved_ids.update(question.id)
     if not answers:
-        logger.info(
-            "answer: no valid comments found to post as answer",
-            extra={"id": question.id},
-        )
-        return
+        logger.info("answer: no valid comments to post", extra={"id": question.id})
+        return False
     answer = answers[0]
     run = "DRY_RUN" if cfg.dry_run else "LIVE_RUN"
     if cfg.dry_run:
@@ -251,7 +249,7 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
             f"answer:[{run}] [{answer.score}] {answer.body[:100]}...",
             extra={"id": "dummy_id"},
         )
-        return
+        return True
     try:
         user = reddit.user.me()
         answered = question.reply(body=answer.body)
@@ -262,11 +260,9 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
         sleep_time = random.choice(cfg.sleep_time) * 60
         logger.info(f"answer: commented successfully. sleeping for {sleep_time}s")
         sleepfor(total_time=sleep_time)
+        return True
     except prawcore.exceptions.Forbidden:
-        logger.critical(
-            "answer: action forbidden. Checking account ban.",
-            exc_info=True,
-        )
+        logger.critical("answer: action forbidden. Checking acc ban.", exc_info=True)
         if check_ban(user=user):
             log_str = f"{user!r} is banned. Exiting the program."
             logger.critical(log_str, exc_info=True)
@@ -275,14 +271,12 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
             logger.critical(f"{user!r} is not banned.")
             sleep_time = random.choice(cfg.sleep_time) * 60
             logger.info(f"asnwer: sleeping for {sleep_time} secs & retrying.")
-            post_answer(question=question, answers=answers)
+            return post_answer(question=question, answers=answers)
     except RedditAPIException as exceptions:
         if sleep_time := reddit._handle_rate_limit(exceptions):
-            logger.exception(
-                f"answer: [RATELIMIT]: sleeping for {sleep_time}s & retrying."
-            )
+            logger.exception(f"answer: [RATELIMIT]: retrying after {sleep_time}s")
             sleepfor(total_time=sleep_time)
-            post_answer(question=question, answers=answers)
+            return post_answer(question=question, answers=answers)
         for exception in exceptions.items:
             if exception.error_type == "BANNED_FROM_SUBREDDIT":
                 log_str = f"answer: {user!r} banned from r/{question.subreddit}"
@@ -292,11 +286,8 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
 
 def validate_post_metrics(post: Submission) -> bool:
     log_info = partial(logger.info, extra={"id": post.id})
-    if (post_age := age(post, unit="minute")) < 3:
-        log_info("validation (metrics): post too new to evaluate")
-        return False
-    if post.num_comments / post_age < 0.5:
-        log_info("validation (metrics): insufficient comments frequency")
+    if post.num_comments / age(post, unit="minute") < 0.25:
+        log_info("validation (metrics): insufficient post activity")
         return False
     return True
 
@@ -329,20 +320,20 @@ def get_questions(stream: ListingGenerator) -> Generator[Submission, None, None]
             return
 
 
-def main(subs: list[str]) -> None:
-    for sub in subs:
-        subreddit = reddit.subreddit(sub)
-        # TODO directly call ListingGenerator to generate stream
-        streams = (subreddit.new(limit=200), subreddit.rising(limit=200))
-        for stream in streams:
-            for question in get_questions(stream):
-                answers: list[Comment] = get_answers(question)
-                post_answer(question, answers)
+def checkout_stream(stream: ListingGenerator) -> None:
+    for question in get_questions(stream):
+        answers: list[Comment] = get_answers(question)
+        if post_answer(question, answers):
+            return
 
 
 if __name__ == "__main__":
-    subs = ["AskReddit", "AskMen", "NoStupidQuestions", "TooAfraidToAsk"]
+    sub = "AskReddit"
+    subreddit = reddit.subreddit(sub)
     pre_execution()
     while True:
-        main(subs)
+        # TODO directly call ListingGenerator to generate stream
+        streams = (subreddit.new(limit=200), subreddit.rising(limit=200))
+        for stream in streams:
+            checkout_stream(stream)
         post_execution()

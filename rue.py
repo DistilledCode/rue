@@ -156,13 +156,13 @@ def pre_execution():
 
 
 def cleanup(user: Redditor) -> bool:
-    if (tot_karma := user.comment_karma + user.link_karma) <= cfg.acc_score_target:
+    total_karma = user.comment_karma + user.link_karma
+    if cfg.acc_score_target is None or total_karma <= cfg.acc_score_target:
         return False
     if not cfg.clean_slate:
-        logger.info(f"user: target reached. exiting. {tot_karma=}")
+        logger.info(f"user: target reached. exiting. {total_karma=}")
         return True
-
-    logger.info(f"user: target reached. removing content. {tot_karma=}")
+    logger.info(f"user: target reached. removing content. {total_karma=}")
 
     def cleanup_comments():
         comments = user.comments.new(limit=None)

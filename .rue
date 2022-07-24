@@ -6,23 +6,23 @@ max_logs: 1000000 # must be > 2 or logs will be deleted and added in a infinite 
 
 max_saved_ids: 2000
 
-post_num_limit: 20
+post_num_limit: 30
 
 min_valid_com_score: 50
 
 min_valid_post_score: 100
 
-max_post_token_len: 15
+max_post_token_len: 20
 
-max_post_age: 2 # hours
+max_post_age: 1 # hours
 
-max_com_char_len: 500
+max_com_char_len: 200
 
-maturing_time: 10 # hours
+maturing_time: 12 # hours
 
 min_self_com_score: 10
 
-acc_score_target: 10000
+acc_score_target: null
 
 # must be wrapped in square brackets
 sleep_time: !!python/object/apply:builtins.range [10, 21, 1] # range(1,2,3)

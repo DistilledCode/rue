@@ -26,7 +26,7 @@ max_post_token_len:
   min: 1
 
 max_post_age:
-  type: int
+  type: integer
   min: 1
 
 max_com_char_len:
@@ -44,6 +44,7 @@ min_self_com_score:
 acc_score_target:
   type: integer
   min: 1
+  nullable: true
 
 clean_slate:
   type: boolean

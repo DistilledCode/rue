@@ -48,8 +48,8 @@ def validate_comment(comment: Comment) -> bool:
     if comment.author is None:
         log_debug("validation: deleted or removed comment (body unavailable)")
         return False
-    if langproc.prp_ratio(comment) > 0.1:
-        log_debug(f"validation: comment personal pronoun ratio > 0.1")
+    if langproc.is_fpp(comment):
+        log_debug(f"validation: comment contains first person perspective words")
         return False
     return True
 
@@ -245,10 +245,6 @@ def post_answer(question: Submission, answers: list[Comment]) -> None:
         )
         return
     answer = answers[0]
-    # TODO might wanna restrict the length of answer being logged
-    logger.debug(f"answer: [original] {answer.body}")
-    answer.body = langproc.paraphrase(answer.body)
-    logger.debug(f"answer: [paraphrased] {answer.body}")
     run = "DRY_RUN" if cfg.dry_run else "LIVE_RUN"
     if cfg.dry_run:
         logger.info(

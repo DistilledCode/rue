@@ -308,7 +308,7 @@ def get_questions(stream: ListingGenerator) -> Generator[Submission, None, None]
         logger_info = partial(logger.info, extra={"id": question.id})
         logger_info(f"question #{stream.yielded}: {sub}[{sort_by}]: {question.title}")
         while len(saved_ids) > cfg.max_saved_ids:
-            saved_ids.bisect()
+            saved_ids.trim()
         if not validate_post(question):
             logger_info("validation (core): invalid. will be never answered")
             saved_ids.update(question.id)

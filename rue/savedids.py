@@ -5,6 +5,8 @@ from rue.config import secrets
 from rue.logger import logger
 from rue.utils import load_db
 
+__all__ = ["saved_ids"]
+
 
 class SavedIds:
     def __init__(self):
@@ -44,7 +46,7 @@ class SavedIds:
             )
             cur.close()
 
-    def bisect(self):
+    def trim(self):
         with load_db(**asdict(secrets.postgres)) as cur:
             cur.execute(
                 """DELETE FROM seen
@@ -54,12 +56,12 @@ class SavedIds:
                         LIMIT (
                             SELECT COUNT(*)
                             FROM seen
-                        )/2
+                        )/10
                     );
                 """
             )
             cur.close()
-        logger.debug(f"Bisected {self.__class__} to lenght {self.__len__()}")
+        logger.debug(f"Trimmed {self.__class__} to lenght {self.__len__()}")
 
     def __len__(self):
         return len(self.ids)

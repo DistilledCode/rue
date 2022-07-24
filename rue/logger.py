@@ -66,14 +66,14 @@ class _DBLogHandler(logging.Handler):
             )
         self.record_num += 1
         while self.record_num > cfg.max_logs:
-            self._bisect()
+            self._trim()
 
     def _update_record_num(self):
         with load_db(**asdict(secrets.postgres)) as cur:
             cur.execute("SELECT COUNT(*) FROM log;")
             self.record_num = cur.fetchall()[0][0]
 
-    def _bisect(self):
+    def _trim(self):
         with load_db(**asdict(secrets.postgres)) as cur:
             cur.execute(
                 """DELETE FROM log
@@ -84,13 +84,13 @@ class _DBLogHandler(logging.Handler):
                         LIMIT (
                             SELECT COUNT(*)
                             FROM log
-                        )/2
+                        )/10
                     );
                 """
             )
         self._update_record_num()
         # + 1 for this very record itself
-        logger.debug(f"Bisected {self.__class__} to lenght {self.record_num + 1}")
+        logger.debug(f"Trimmed {self.__class__} to lenght {self.record_num + 1}")
 
 
 def _get_logger():

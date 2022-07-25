@@ -6,13 +6,13 @@ max_logs: 1000000 # must be > 2 or logs will be deleted and added in a infinite 
 
 max_saved_ids: 2000
 
-post_num_limit: 30
+post_num_limit: 20
 
 min_valid_com_score: 50
 
 min_valid_post_score: 100
 
-max_post_token_len: 20
+max_post_token_len: 15
 
 max_post_age: 1 # hours
 

@@ -127,7 +127,7 @@ def google_query(question: Submission, sleep_time: int = 20) -> list[Comment]:
         if exception.code == 429:
             logger.exception(f"googled: {exception.msg}", stack_info=True)
             logger.info(f"googled: rertying after {sleep_time} minutes")
-            sleepfor(sleep_time * 60)
+            sleepfor(sleep_time * 60, user=reddit.user.me())
             # we might end up in an infinite loop
             return google_query(question, sleep_time + 5)
     return ans_candidates
@@ -152,7 +152,7 @@ def pre_execution():
     else:
         if age(latest, unit="minute") < (sl_time := min(cfg.sleep_time)):
             logger.info(f"Latest comment is too young. Sleeping for {sl_time} minutes")
-            sleepfor(sl_time * 60)
+            sleepfor(sl_time * 60, user=user)
 
 
 def cleanup(user: Redditor) -> bool:
@@ -259,7 +259,7 @@ def post_answer(question: Submission, answers: list[Comment]) -> bool:
         )
         sleep_time = random.choice(cfg.sleep_time) * 60
         logger.info(f"answer: commented successfully. sleeping for {sleep_time}s")
-        sleepfor(total_time=sleep_time)
+        sleepfor(total_time=sleep_time, user=user)
         return True
     except prawcore.exceptions.Forbidden:
         logger.critical("answer: action forbidden. Checking acc ban.", exc_info=True)
@@ -275,7 +275,7 @@ def post_answer(question: Submission, answers: list[Comment]) -> bool:
     except RedditAPIException as exceptions:
         if sleep_time := reddit._handle_rate_limit(exceptions):
             logger.exception(f"answer: [RATELIMIT]: retrying after {sleep_time}s")
-            sleepfor(total_time=sleep_time)
+            sleepfor(total_time=sleep_time, user=user)
             return post_answer(question=question, answers=answers)
         for exception in exceptions.items:
             if exception.error_type == "BANNED_FROM_SUBREDDIT":

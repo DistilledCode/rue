@@ -103,7 +103,7 @@ def _get_logger():
     }
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
-    frmt = "{asctime} {levelname:^10} {filename}:{lineno}  {message}"
+    frmt = "{asctime} {levelname:^8} {filename}:{lineno:<4} {message}"
     formatter = logging.Formatter(frmt, style="{")
     db_handler = _DBLogHandler()
     db_handler.setFormatter(formatter)

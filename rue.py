@@ -284,14 +284,6 @@ def post_answer(question: Submission, answers: list[Comment]) -> bool:
                 sys.exit(log_str)
 
 
-def validate_post_metrics(post: Submission) -> bool:
-    log_info = partial(logger.info, extra={"id": post.id})
-    if post.num_comments / age(post, unit="minute") < 0.25:
-        log_info("validation (metrics): insufficient post activity")
-        return False
-    return True
-
-
 def get_questions(stream: ListingGenerator) -> Generator[Submission, None, None]:
     validated_posts = 0
     _, sub, sort_by = stream.url.split("/")
@@ -300,20 +292,17 @@ def get_questions(stream: ListingGenerator) -> Generator[Submission, None, None]
         logger_info(f"question #{stream.yielded}: {sub}[{sort_by}]: {question.title}")
         while len(saved_ids) > cfg.max_saved_ids:
             saved_ids.trim()
-        if not validate_post(question):
+        is_valid = validate_post(question)
+        saved_ids.update(question.id)
+        if not is_valid:
             logger_info("validation (core): invalid. will be never answered")
-            saved_ids.update(question.id)
             # if we sort by 'new' and encountered first post which is `too old`,
             # rest of the upcoming posts will also be `too old`
             if sort_by == "new" and question.too_old == True:
                 logger_info(f"{sort_by=} post is 'too old'. Iteration will be futile")
                 return
             continue
-        logger_info("validation (core): valid. checking for metrics")
-        if not validate_post_metrics(question):
-            logger_info("validation (metrics): falied. will be evaluated later")
-            continue
-        logger_info("validation (metrics): passed")
+        logger_info("validation (core): valid")
         validated_posts += 1
         yield question
         if validated_posts > cfg.post_num_limit:
@@ -333,7 +322,7 @@ if __name__ == "__main__":
     pre_execution()
     while True:
         # TODO directly call ListingGenerator to generate stream
-        streams = (subreddit.new(limit=200), subreddit.rising(limit=200))
+        streams = (subreddit.new(limit=None), subreddit.rising(limit=None))
         for stream in streams:
             checkout_stream(stream)
         post_execution()

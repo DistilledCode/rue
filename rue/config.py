@@ -2,6 +2,7 @@ from builtins import range
 from dataclasses import make_dataclass
 from pathlib import Path
 from sys import exit
+from zoneinfo import ZoneInfoNotFoundError, available_timezones
 
 import yaml
 from cerberus import TypeDefinition, Validator
@@ -61,6 +62,11 @@ def _get_config() -> tuple[dict]:
         "secrets_schema": dir.joinpath("schema/secrets.yaml"),
     }
     config_dict = _read_files(file_dict)
+
+    time_zone = config_dict["config"]["schedule"]["tz"]
+    if time_zone not in available_timezones():
+        raise ZoneInfoNotFoundError(f"No time zone found with key {time_zone!r}")
+
     Validator.types_mapping["range"] = TypeDefinition("range", (range,), ())
     validator = Validator()
     validator.require_all = True

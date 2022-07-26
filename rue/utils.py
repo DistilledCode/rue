@@ -1,6 +1,8 @@
 from contextlib import contextmanager
+from datetime import datetime
 from time import sleep, time
 from typing import Generator, Union
+from zoneinfo import ZoneInfo
 
 from alive_progress import alive_bar
 from praw.models.reddit.comment import Comment
@@ -29,6 +31,7 @@ def load_db(**kwargs) -> Generator[cursor, None, None]:
 
 
 def _get_stats(user: Redditor) -> str:
+    user._fetch()
     comments = user.comments.new(limit=5)
     scores = [comment.score for comment in comments]
     karma = user.link_karma + user.comment_karma
@@ -82,3 +85,15 @@ def age(obj: Union[Submission, Comment], unit: str = "second") -> float:
         "week": 604800,
     }.get(unit, "second")
     return (time() - obj.created_utc) / conversion
+
+
+def in_schedule(schedule: dict) -> bool:
+    if not schedule.follow:
+        return True
+    now = datetime.now(tz=ZoneInfo(schedule.tz))
+    if schedule.begin < schedule.end:
+        return schedule.begin <= now.hour <= schedule.end
+    elif schedule.end < schedule.begin:
+        return not (schedule.end < now.hour < schedule.begin)
+    else:
+        return True

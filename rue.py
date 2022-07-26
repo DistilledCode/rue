@@ -19,7 +19,7 @@ from rue import langproc, nlp, reddit
 from rue.config import cfg
 from rue.logger import logger
 from rue.savedids import saved_ids
-from rue.utils import age, sleepfor
+from rue.utils import age, in_schedule, sleepfor
 
 
 def update_preferences(googled: Submission) -> None:
@@ -134,6 +134,9 @@ def google_query(question: Submission, sleep_time: int = 20) -> list[Comment]:
 
 
 def post_execution():
+    if not in_schedule(cfg.schedule):
+        logger.info(f"Out of schedule: {cfg.schedule}\n")
+        sys.exit()
     user = reddit.user.me()
     del_poor_performers(user=user)
     check_shadowban(user=user)
@@ -221,7 +224,7 @@ def check_shadowban(user: Redditor) -> Optional[bool]:
                 logger.warn(f"comment is shadowbanned", extra={"id": banned_id})
         return True
     else:
-        logger.info(f"none of {len(praw_comments)} comments were shadowbanned")
+        logger.info(f"none of {len(praw_comments)} fetched comments were shadowbanned")
         return False
 
 
@@ -295,14 +298,14 @@ def get_questions(stream: ListingGenerator) -> Generator[Submission, None, None]
         is_valid = validate_post(question)
         saved_ids.update(question.id)
         if not is_valid:
-            logger_info("validation (core): invalid. will be never answered")
+            logger_info("validation: invalid")
             # if we sort by 'new' and encountered first post which is `too old`,
             # rest of the upcoming posts will also be `too old`
             if sort_by == "new" and question.too_old == True:
                 logger_info(f"{sort_by=} post is 'too old'. Iteration will be futile")
                 return
             continue
-        logger_info("validation (core): valid")
+        logger_info("validation: valid")
         validated_posts += 1
         yield question
         if validated_posts > cfg.post_num_limit:
@@ -322,7 +325,7 @@ if __name__ == "__main__":
     pre_execution()
     while True:
         # TODO directly call ListingGenerator to generate stream
-        streams = (subreddit.new(limit=None), subreddit.rising(limit=None))
-        for stream in streams:
-            checkout_stream(stream)
+        stream = subreddit.new(limit=None)  # , subreddit.rising(limit=None))
+        # for stream in streams:
+        checkout_stream(stream)
         post_execution()

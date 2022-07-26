@@ -30,3 +30,10 @@ sleep_time: !!python/object/apply:builtins.range [10, 21, 1] # range(1,2,3)
 log_level:
   stream: "info"
   db: "debug"
+
+schedule:
+  follow: false
+  # https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+  tz: "America/Los_Angeles"
+  begin: 3 # 24 hours format
+  end: 4

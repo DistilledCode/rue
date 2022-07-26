@@ -61,3 +61,20 @@ log_level:
     stream:
       type: string
       allowed: ["debug", "info", "warning", "error", "critical"]
+
+schedule:
+  type: dict
+  schema:
+    follow:
+      type: boolean
+    tz:
+      type: string
+      empty: false
+    begin:
+      type: integer
+      min: 0
+      max: 24
+    end:
+      type: integer
+      min: 0
+      max: 24

@@ -2,7 +2,6 @@ import random
 import re
 import sys
 from functools import partial
-from string import printable
 from typing import Generator, Optional
 from urllib.error import HTTPError
 
@@ -13,7 +12,8 @@ from praw.models.listing.generator import ListingGenerator
 from praw.models.reddit.comment import Comment
 from praw.models.reddit.redditor import Redditor
 from praw.models.reddit.submission import Submission
-from requests import get
+from praw.models.reddit.subreddit import Subreddit
+from requests import Response, get
 
 from rue import langproc, nlp, reddit
 from rue.config import cfg
@@ -31,25 +31,22 @@ def update_preferences(googled: Submission) -> None:
 def validate_comment(comment: Comment) -> bool:
     log_debug = partial(logger.debug, extra={"id": comment.id})
     if len(comment.body) > cfg.max_com_char_len:
-        log_debug(f"validation: comment characters length > {cfg.max_com_char_len}")
-        return False
-    if not all(i in printable for i in comment.body):
-        log_debug(f"validation: all characters are not printable")
+        log_debug(f"validation: invalid. character len > {cfg.max_com_char_len}")
         return False
     if comment.score < cfg.min_valid_com_score:
-        log_debug(f"validation: comment score < {cfg.min_valid_com_score}")
+        log_debug(f"validation: invalid. comment score < {cfg.min_valid_com_score}")
         return False
     if comment.edited is not False:
-        log_debug("validation: edited comment")
+        log_debug("validation: invalid. edited comment")
         return False
     if comment.stickied is True:
-        log_debug(f"validation: stickied comment")
+        log_debug(f"validation: invalid. stickied comment")
         return False
     if comment.author is None:
-        log_debug("validation: deleted or removed comment (body unavailable)")
+        log_debug("validation: invalid. body unavailable")
         return False
     if langproc.is_fpp(comment):
-        log_debug(f"validation: comment contains first person perspective words")
+        log_debug(f"validation: invalid. contains first person perspective words")
         return False
     return True
 
@@ -58,29 +55,26 @@ def validate_post(post: Submission) -> bool:
     post.too_old = False
     log_info = partial(logger.info, extra={"id": post.id})
     if post.author is None:
-        log_info("validation (core): deleted or removed post (attributes unavaialble)")
+        log_info("validation: invalid. deleted or removed (attributes unavaialble)")
         return False
     if (post_age := age(post, unit="hour")) > cfg.max_post_age:
         post.too_old = True
-        log_info(f"validation (core): post is too old ({round(post_age,3)} hours)")
+        log_info(f"validation: invalid. post is too old ({round(post_age,3)} hours)")
         return False
     if post.num_comments > 200:
-        log_info("validatio (core): too many comments, hard to get attention")
-        return False
-    if post.selftext:
-        log_info("validation (core): post contain self text")
+        log_info("validation: invalid. too many comments, hard to get attention")
         return False
     if (post.id,) in saved_ids.ids:
-        log_info("validation (core): duplicate post (saved earlier)")
+        log_info("validation: invalid. seen earlier")
         return False
     if len(nlp(post.title)) > cfg.max_post_token_len:
-        log_info(f"validation (core): post token length > {cfg.max_post_token_len}")
+        log_info(f"validation: invalid.  token length > {cfg.max_post_token_len}")
         return False
     return True
 
 
 def get_answers(question: Submission) -> list[Comment]:
-    ans_candidates = google_query(question)
+    ans_candidates: list[Comment] = google_query(question)
     answers: list[Comment] = []
     if not ans_candidates:
         return answers
@@ -88,8 +82,6 @@ def get_answers(question: Submission) -> list[Comment]:
         if validate_comment(comment):
             logger.info("comment: valid as answer", extra={"id": comment.id})
             answers.append(comment)
-        else:
-            logger.debug("comment: invalid as answer", extra={"id": comment.id})
     answers.sort(key=lambda x: x.score, reverse=True)
     return answers
 
@@ -101,7 +93,7 @@ def google_query(question: Submission, sleep_time: int = 20) -> list[Comment]:
     try:
         for searched in search(query=query, num=5, stop=5, country="US"):
             if (match := re.search(pattern, searched)) is not None:
-                googled = reddit.submission(match.group(1))
+                googled: Submission = reddit.submission(match.group(1))
             else:
                 logger.debug("googled: result not from r/askreddit")
                 continue
@@ -133,23 +125,23 @@ def google_query(question: Submission, sleep_time: int = 20) -> list[Comment]:
     return ans_candidates
 
 
-def post_execution():
+def post_execution() -> None:
     if not in_schedule(cfg.schedule):
         logger.info(f"Out of schedule: {cfg.schedule}\n")
         sys.exit()
-    user = reddit.user.me()
+    user: Redditor = reddit.user.me()
     del_poor_performers(user=user)
     check_shadowban(user=user)
     if cleanup(user=user):
         sys.exit()
 
 
-def pre_execution():
+def pre_execution() -> None:
     post_execution()
-    user = reddit.user.me()
-    comments = user.comments.new()
+    user: Redditor = reddit.user.me()
+    comments: ListingGenerator = user.comments.new()
     try:
-        latest = next(comments)
+        latest: Comment = next(comments)
     except StopIteration:
         pass
     else:
@@ -159,7 +151,7 @@ def pre_execution():
 
 
 def cleanup(user: Redditor) -> bool:
-    total_karma = user.comment_karma + user.link_karma
+    total_karma: int = user.comment_karma + user.link_karma
     if cfg.acc_score_target is None or total_karma <= cfg.acc_score_target:
         return False
     if not cfg.clean_slate:
@@ -167,15 +159,12 @@ def cleanup(user: Redditor) -> bool:
         return True
     logger.info(f"user: target reached. removing content. {total_karma=}")
 
-    def cleanup_comments():
-        comments = user.comments.new(limit=None)
+    def cleanup_comments() -> None:
+        comments: ListingGenerator = user.comments.new(limit=None)
         for comment in comments:
             reddit.comment(comment.id).delete()
             logger.debug("user: comment deleted", extra={"id": comment.id})
-
-        # `_exhausted` attr of ListingGenerator is True when it runs out
-        #  of any more ids to return. But as it's a lazy object, we have
-        #  to fetch any of it's attr first to get the real value.
+        # `_exhausted` is True when it returns the last bacth.
         if comments._exhausted is True:
             return
         else:
@@ -197,7 +186,7 @@ def check_shadowban(user: Redditor) -> Optional[bool]:
         sys.exit(log_str)
     for i in range(r := 30):
         # we get only 25 most recent comments, might use pushshift.io in future
-        rsp = get(f"https://www.reddit.com/user/{str(user)}.json")
+        rsp: Response = get(f"https://www.reddit.com/user/{str(user)}.json")
         if rsp.status_code != 200:
             if i % 5 == 0:  # logging every 5th failed attempt
                 logger.debug(f"json: [{i}/{r} retries] {rsp.status_code} {rsp.reason}")
@@ -207,13 +196,13 @@ def check_shadowban(user: Redditor) -> Optional[bool]:
     else:
         logger.warning("Retries exhuasted. Skipping shadowban check")
         return None
-    req_comments = {
+    req_comments: set = {
         child["data"]["id"]
         for child in rsp.json()["data"]["children"]
         if child["kind"] == "t1"
     }
-    limit = min(len(req_comments), 100)
-    praw_comments = {comment.id for comment in user.comments.new(limit=limit)}
+    limit: int = min(len(req_comments), 100)
+    praw_comments: set = {comment.id for comment in user.comments.new(limit=limit)}
     if diff := praw_comments.difference(req_comments):
         if diff == praw_comments:
             logger.critical(f"all {limit} comments are shadowbanned: {','.join(diff)}")
@@ -229,9 +218,9 @@ def check_shadowban(user: Redditor) -> Optional[bool]:
 
 
 def del_poor_performers(user: Redditor) -> None:
-    all_comments = user.comments.new(limit=None)
-    target_comments = (i for i in all_comments if i.score < cfg.min_self_com_score)
-    for comment in target_comments:
+    comments = user.comments.new(limit=None)
+    low_score: list[Comment] = [i for i in comments if i.score < cfg.min_self_com_score]
+    for comment in low_score:
         if (cma := age(comment, unit="hour")) > cfg.maturing_time or comment.score < 1:
             reddit.comment(comment.id).delete()
             logger.debug(
@@ -242,10 +231,11 @@ def del_poor_performers(user: Redditor) -> None:
 
 def post_answer(question: Submission, answers: list[Comment]) -> bool:
     saved_ids.update(question.id)
+    user: Redditor = reddit.user.me()
     if not answers:
         logger.info("answer: no valid comments to post", extra={"id": question.id})
         return False
-    answer = answers[0]
+    answer: Comment = answers[0]
     run = "DRY_RUN" if cfg.dry_run else "LIVE_RUN"
     if cfg.dry_run:
         logger.info(
@@ -254,8 +244,7 @@ def post_answer(question: Submission, answers: list[Comment]) -> bool:
         )
         return True
     try:
-        user = reddit.user.me()
-        answered = question.reply(body=answer.body)
+        answered: Comment = question.reply(body=answer.body)
         logger.info(
             f"answer:[{run}] [{answer.score}] ({answer.id}) {answer.body[:100]}...",
             extra={"id": answered.id},
@@ -298,11 +287,8 @@ def get_questions(stream: ListingGenerator) -> Generator[Submission, None, None]
         is_valid = validate_post(question)
         saved_ids.update(question.id)
         if not is_valid:
-            logger_info("validation: invalid")
-            # if we sort by 'new' and encountered first post which is `too old`,
-            # rest of the upcoming posts will also be `too old`
             if sort_by == "new" and question.too_old == True:
-                logger_info(f"{sort_by=} post is 'too old'. Iteration will be futile")
+                logger.info(f"{sort_by=} post is 'too old'. Iteration will be futile")
                 return
             continue
         logger_info("validation: valid")
@@ -321,11 +307,11 @@ def checkout_stream(stream: ListingGenerator) -> None:
 
 if __name__ == "__main__":
     sub = "AskReddit"
-    subreddit = reddit.subreddit(sub)
+    subreddit: Subreddit = reddit.subreddit(sub)
     pre_execution()
     while True:
         # TODO directly call ListingGenerator to generate stream
-        stream = subreddit.new(limit=None)  # , subreddit.rising(limit=None))
-        # for stream in streams:
-        checkout_stream(stream)
+        streams = (subreddit.new(limit=None), subreddit.rising(limit=None))
+        for stream in streams:
+            checkout_stream(stream)
         post_execution()

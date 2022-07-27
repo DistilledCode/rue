@@ -57,9 +57,11 @@ log_level:
   schema:
     db:
       type: string
+      empty: false
       allowed: ["debug", "info", "warning", "error", "critical"]
     stream:
       type: string
+      empty: false
       allowed: ["debug", "info", "warning", "error", "critical"]
 
 schedule:

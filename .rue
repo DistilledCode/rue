@@ -2,13 +2,13 @@ dry_run: false
 
 clean_slate: true
 
-max_logs: 1000000 # must be > 2 or logs will be deleted and added in a infinite loop
+max_logs: 9000 # must be > 2 or logs will be deleted and added in a infinite loop
 
-max_saved_ids: 2000
+max_saved_ids: 1000
 
-post_num_limit: 20
+post_num_limit: 10
 
-min_valid_com_score: 50
+min_valid_com_score: 10
 
 min_valid_post_score: 100
 
@@ -25,7 +25,7 @@ min_self_com_score: 10
 acc_score_target: null
 
 # must be wrapped in square brackets
-sleep_time: !!python/object/apply:builtins.range [10, 21, 1] # range(1,2,3)
+sleep_time: !!python/object/apply:builtins.range [5, 16, 1] # range(1,2,3)
 
 log_level:
   stream: "info"

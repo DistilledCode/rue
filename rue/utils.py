@@ -5,6 +5,7 @@ from typing import Generator, Union
 from zoneinfo import ZoneInfo
 
 from alive_progress import alive_bar
+from praw.models.listing.generator import ListingGenerator
 from praw.models.reddit.comment import Comment
 from praw.models.reddit.redditor import Redditor
 from praw.models.reddit.submission import Submission
@@ -13,7 +14,7 @@ from psycopg2.extensions import cursor
 
 
 @contextmanager
-def load_db(**kwargs) -> Generator[cursor, None, None]:
+def load_db(**kwargs: dict[str, str]) -> Generator[cursor, None, None]:
     # TODO error handling
     if kwargs["url"] is not None:
         con = connect(kwargs["url"])
@@ -23,7 +24,7 @@ def load_db(**kwargs) -> Generator[cursor, None, None]:
             user=kwargs["user"],
             password=kwargs["password"],
         )
-    cur = con.cursor()
+    cur: cursor = con.cursor()
     yield cur
     con.commit()
     cur.close()
@@ -32,9 +33,9 @@ def load_db(**kwargs) -> Generator[cursor, None, None]:
 
 def _get_stats(user: Redditor) -> str:
     user._fetch()
-    comments = user.comments.new(limit=5)
-    scores = [comment.score for comment in comments]
-    karma = user.link_karma + user.comment_karma
+    comments: ListingGenerator = user.comments.new(limit=5)
+    scores: list[int] = [comment.score for comment in comments]
+    karma: int = user.link_karma + user.comment_karma
     return f"User: {str(user)!r}; Karma: {karma}; Last 5 comments score: {scores}"
 
 
@@ -77,20 +78,20 @@ def sanitize(title: str) -> str:
 
 
 def age(obj: Union[Submission, Comment], unit: str = "second") -> float:
-    conversion = {
+    conversion: int = {
         "second": 1,
         "minute": 60,
         "hour": 3600,
         "day": 86400,
         "week": 604800,
-    }.get(unit, "second")
+    }.get(unit, 1)
     return (time() - obj.created_utc) / conversion
 
 
-def in_schedule(schedule: dict) -> bool:
+def in_schedule(schedule) -> bool:
     if not schedule.follow:
         return True
-    now = datetime.now(tz=ZoneInfo(schedule.tz))
+    now: datetime = datetime.now(tz=ZoneInfo(schedule.tz))
     if schedule.begin < schedule.end:
         return schedule.begin <= now.hour <= schedule.end
     elif schedule.end < schedule.begin:

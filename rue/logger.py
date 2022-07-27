@@ -1,6 +1,6 @@
-import datetime
 import logging
 from dataclasses import asdict
+from datetime import datetime
 
 from rue.config import cfg, secrets
 from rue.utils import load_db
@@ -34,16 +34,16 @@ class _DBLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         self.format(record=record)
-        if record.exc_info is not None:
+        if record.exc_info is not None and record.exc_text:
             is_exception = True
             exc_traceback = "".join(i for i in record.exc_text)
         else:
             is_exception = False
             exc_traceback = None
 
-        obj_id = getattr(record, "id", None)
+        obj_id: str | None = getattr(record, "id", None)
         try:
-            time_stamp = datetime.datetime.fromtimestamp(record.created)
+            time_stamp: datetime = datetime.fromtimestamp(record.created)
             record_vals = (
                 time_stamp,
                 record.levelname,
@@ -57,23 +57,25 @@ class _DBLogHandler(logging.Handler):
             )
         except Exception:
             self.handleError(record)
-        with load_db(**asdict(secrets.postgres)) as cur:
-            cur.execute(
-                """INSERT INTO log
+        else:
+            with load_db(**asdict(secrets.postgres)) as cur:
+                cur.execute(
+                    """
+                    INSERT INTO log
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s);
-                """,
-                record_vals,
-            )
-        self.record_num += 1
-        while self.record_num > cfg.max_logs:
-            self._trim()
+                    """,
+                    record_vals,
+                )
+            self.record_num += 1
+            while self.record_num > cfg.max_logs:
+                self._trim()
 
-    def _update_record_num(self):
+    def _update_record_num(self) -> None:
         with load_db(**asdict(secrets.postgres)) as cur:
             cur.execute("SELECT COUNT(*) FROM log;")
-            self.record_num = cur.fetchall()[0][0]
+            self.record_num: int = cur.fetchall()[0][0]
 
-    def _trim(self):
+    def _trim(self) -> None:
         with load_db(**asdict(secrets.postgres)) as cur:
             cur.execute(
                 """DELETE FROM log
@@ -81,6 +83,7 @@ class _DBLogHandler(logging.Handler):
                         SELECT timestamp
                         FROM log
                         ORDER BY timestamp
+                        ASC
                         LIMIT (
                             SELECT COUNT(*)
                             FROM log
@@ -93,7 +96,7 @@ class _DBLogHandler(logging.Handler):
         logger.debug(f"Trimmed {self.__class__} to lenght {self.record_num + 1}")
 
 
-def _get_logger():
+def _get_logger() -> logging.Logger:
     logging_level = {
         "debug": logging.DEBUG,
         "info": logging.INFO,
@@ -107,13 +110,13 @@ def _get_logger():
     formatter = logging.Formatter(frmt, style="{")
     db_handler = _DBLogHandler()
     db_handler.setFormatter(formatter)
-    db_handler.setLevel(logging_level.get(cfg.log_level.db))
+    db_handler.setLevel(logging_level[cfg.log_level.db])
     stream_handler = logging.StreamHandler()
-    stream_handler.setLevel(logging_level.get(cfg.log_level.stream))
+    stream_handler.setLevel(logging_level[cfg.log_level.stream])
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
     logger.addHandler(db_handler)
     return logger
 
 
-logger = _get_logger()
+logger: logging.Logger = _get_logger()

@@ -33,13 +33,17 @@ max_com_char_len:
   type: integer
   min: 1
 
-maturing_time:
-  type: integer
-  min: 1
-
-min_self_com_score:
-  type: integer
-  min: 1
+standard:
+  type: dict
+  schema:
+    follow:
+      type: boolean
+    maturing_time:
+      type: integer
+      min: 1
+    threshold:
+      type: integer
+      min: 1
 
 acc_score_target:
   type: integer

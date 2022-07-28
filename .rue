@@ -18,9 +18,10 @@ max_post_age: 1 # hours
 
 max_com_char_len: 200
 
-maturing_time: 12 # hours
-
-min_self_com_score: 10
+standard:
+  follow: true
+  maturing_time: 12 # hours
+  threshold: 10
 
 acc_score_target: null
 

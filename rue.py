@@ -218,13 +218,15 @@ def check_shadowban(user: Redditor) -> Optional[bool]:
 
 
 def del_poor_performers(user: Redditor) -> None:
+    if not cfg.standard.follow:
+        return
     comments = user.comments.new(limit=None)
-    low_score: list[Comment] = [i for i in comments if i.score < cfg.min_self_com_score]
+    low_score = [i for i in comments if i.score < cfg.standard.threshold]
     for comment in low_score:
-        if (cma := age(comment, unit="hour")) > cfg.maturing_time or comment.score < 1:
+        if age(comment, unit="hour") > cfg.standard.maturing_time or comment.score < 1:
             reddit.comment(comment.id).delete()
             logger.debug(
-                f"deleted poor performing comment. ({comment.score}) ({cma} hrs old)",
+                f"deleted poor performing comment. ({comment.score})",
                 extra={"id": comment.id},
             )
 

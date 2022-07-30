@@ -45,7 +45,10 @@ def validate_comment(comment: Comment) -> bool:
     if comment.author is None:
         log_debug("validation: invalid. body unavailable")
         return False
-    if langproc.is_fpp(comment):
+    if langproc.contains_datetime(comment):
+        log_debug("validation: invalid. contains date")
+        return False
+    if langproc.contains_first_person(comment):
         log_debug(f"validation: invalid. contains first person perspective words")
         return False
     return True
@@ -80,7 +83,6 @@ def get_answers(question: Submission) -> list[Comment]:
         return answers
     for comment in ans_candidates:
         if validate_comment(comment):
-            logger.info("comment: valid as answer", extra={"id": comment.id})
             answers.append(comment)
     answers.sort(key=lambda x: x.score, reverse=True)
     return answers
@@ -237,6 +239,7 @@ def post_answer(question: Submission, answers: list[Comment]) -> bool:
     if not answers:
         logger.info("answer: no valid comments to post", extra={"id": question.id})
         return False
+    logger.info(f"answer: found {len(answers)} valid comments to post")
     answer: Comment = answers[0]
     run = "DRY_RUN" if cfg.dry_run else "LIVE_RUN"
     if cfg.dry_run:

@@ -14,7 +14,11 @@ def calculate_similarity(asked_title: str, googled_title: str) -> float:
     return similarity
 
 
-def is_fpp(comment: Comment) -> bool:
+def contains_datetime(comment: Comment) -> bool:
+    return any(token.ent_type_ in ("DATE", "TIME") for token in nlp(comment.body))
+
+
+def contains_first_person(comment: Comment) -> bool:
     fp = (
         "i",
         "me",

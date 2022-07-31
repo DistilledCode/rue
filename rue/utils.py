@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 from datetime import datetime
+from os import environ
 from time import sleep, time
 from typing import Generator, Union
 from zoneinfo import ZoneInfo
@@ -16,8 +17,9 @@ from psycopg2.extensions import cursor
 @contextmanager
 def load_db(**kwargs: dict[str, str]) -> Generator[cursor, None, None]:
     # TODO error handling
-    if kwargs["url"] is not None:
-        con = connect(kwargs["url"], sslmode="require")
+    if kwargs["url"]:
+        URL = environ["DATABASE_URL"]
+        con = connect(URL, sslmode="require")
     else:
         con = connect(
             dbname=kwargs["dbname"],

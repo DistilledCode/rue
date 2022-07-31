@@ -58,7 +58,7 @@ def _get_config() -> tuple[dict]:
     file_dict = {
         "config": dir.joinpath(".rue"),
         "config_schema": dir.joinpath("schema/rue.yaml"),
-        "secrets": dir.joinpath(".secrets"),
+        "secrets": dir.joinpath(".rue.secrets"),
         "secrets_schema": dir.joinpath("schema/secrets.yaml"),
     }
     config_dict = _read_files(file_dict)

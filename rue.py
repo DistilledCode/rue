@@ -196,7 +196,7 @@ def check_shadowban(user: Redditor) -> Optional[bool]:
             logger.info(f"json: [{i}/{r} retries] {rsp.status_code} {rsp.reason}")
             break
     else:
-        logger.warning("Retries exhuasted. Skipping shadowban check")
+        logger.warning(f"Retries exhuasted. Skipping shadowban check ({rsp.reason})")
         return None
     req_comments: set = {
         child["data"]["id"]

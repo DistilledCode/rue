@@ -120,7 +120,7 @@ def google_query(question: Submission, sleep_time: int = 20) -> list[Comment]:
     except HTTPError as exception:
         if exception.code == 429:
             logger.exception(f"googled: {exception.msg}", stack_info=True)
-            logger.info(f"googled: rertying after {sleep_time} minutes")
+            logger.info(f"googled: retrying after {sleep_time} minutes")
             sleepfor(sleep_time * 60, user=reddit.user.me())
             # we might end up in an infinite loop
             return google_query(question, sleep_time + 5)

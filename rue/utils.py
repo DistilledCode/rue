@@ -17,7 +17,7 @@ from psycopg2.extensions import cursor
 def load_db(**kwargs: dict[str, str]) -> Generator[cursor, None, None]:
     # TODO error handling
     if kwargs["url"] is not None:
-        con = connect(kwargs["url"])
+        con = connect(kwargs["url"], sslmode="require")
     else:
         con = connect(
             dbname=kwargs["dbname"],

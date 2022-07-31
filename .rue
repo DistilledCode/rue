@@ -30,7 +30,7 @@ sleep_time: !!python/object/apply:builtins.range [5, 16, 1] # range(1,2,3)
 
 log_level:
   stream: "info"
-  db: "debug"
+  db: "info"
 
 schedule:
   follow: false

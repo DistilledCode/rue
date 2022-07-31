@@ -1,7 +1,7 @@
 __pycache__
 venv-win-rue
 praw.ini
-.secrets
+.rue.secrets
 .google-cookie
 .gitattributes
 .todo

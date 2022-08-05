@@ -16,7 +16,6 @@ from psycopg2.extensions import cursor
 
 @contextmanager
 def load_db(**kwargs: dict[str, str]) -> Generator[cursor, None, None]:
-    # TODO error handling
     if kwargs["url"]:
         URL = environ["DATABASE_URL"]
         con = connect(URL, sslmode="require")

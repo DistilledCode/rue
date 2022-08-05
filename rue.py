@@ -240,7 +240,7 @@ def post_answer(question: Submission, answers: list[Comment]) -> bool:
         logger.info("answer: no valid comments to post", extra={"id": question.id})
         return False
     logger.info(f"answer: found {len(answers)} valid comments to post")
-    answer: Comment = answers[0]
+    answer: Comment = random.choice(answers)
     run = "DRY_RUN" if cfg.dry_run else "LIVE_RUN"
     if cfg.dry_run:
         logger.info(

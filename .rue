@@ -8,9 +8,9 @@ max_saved_ids: 1000
 
 post_num_limit: 10
 
-min_valid_com_score: 10
+min_valid_com_score: 100
 
-min_valid_post_score: 100
+min_valid_post_score: 500
 
 max_post_token_len: 15
 

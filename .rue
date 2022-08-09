@@ -14,6 +14,8 @@ min_valid_post_score: 500
 
 max_post_token_len: 15
 
+banned_words: ["upvoting"]
+
 max_post_age: 1 # hours
 
 max_com_char_len: 200

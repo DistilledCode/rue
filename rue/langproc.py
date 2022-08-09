@@ -1,6 +1,7 @@
 from praw.models.reddit.comment import Comment
 
 from rue import nlp
+from rue.config import cfg
 from rue.logger import logger
 from rue.utils import sanitize
 
@@ -33,3 +34,9 @@ def contains_first_person(comment: Comment) -> bool:
     )
     doc = nlp(comment.body)
     return any(token.lemma_.lower() in fp for token in doc if token.pos_ == "PRON")
+
+
+def contains_banned_words(comment: Comment) -> str:
+    if any((x := str(word.lower_)) in cfg.banned_words for word in nlp(comment.body)):
+        return x
+    return ""

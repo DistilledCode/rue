@@ -17,6 +17,11 @@ min_valid_post_score:
   type: integer
   min: 1
 
+banned_words:
+  type: list
+  schema:
+    type: string
+
 post_num_limit:
   type: integer
   min: 1

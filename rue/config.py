@@ -18,6 +18,8 @@ def _dict2dataclass(name: str, conv_dict: dict, **kwargs: dict) -> type:
     for key, val in conv_dict.items():
         if val.__class__ is dict:
             val = _dict2dataclass(key, val, **kwargs)
+        if val.__class__ in [list, set]:
+            val = tuple(val)
         field_list.append((key, val.__class__, val))
     DataClass = make_dataclass(name, field_list, **kwargs)
     return DataClass()

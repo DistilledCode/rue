@@ -45,6 +45,9 @@ def validate_comment(comment: Comment) -> bool:
     if comment.author is None:
         log_debug("validation: invalid. body unavailable")
         return False
+    if word := langproc.contains_banned_words(comment):
+        log_debug(f"validation: invalid. contains banned word ({word})")
+        return False
     if langproc.contains_datetime(comment):
         log_debug("validation: invalid. contains date")
         return False
